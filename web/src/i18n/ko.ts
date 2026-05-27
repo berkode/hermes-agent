@@ -78,6 +78,7 @@ export const ko: Translations = {
       profiles: "프로필: 멀티 에이전트",
       plugins: "플러그인",
       sessions: "세션",
+      services: "Services",
       skills: "스킬",
     },
     modelToolsSheetSubtitle: "및 도구",
@@ -533,6 +534,17 @@ export const ko: Translations = {
       tweet_text: "Just unlocked {tier_part}\"{name}\" in Hermes Agent ☤",
     },
   },
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Uses ~/.hermes/scripts/hermes-services.sh. Same controls as the legacy console on port 8790.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
+  },
+
   kanban: {
     loading: "Kanban 보드를 불러오는 중입니다…",
     loadFailed: "Kanban 보드를 불러오지 못했습니다: ",

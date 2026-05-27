@@ -77,6 +77,7 @@ export const zh: Translations = {
       profiles: "多Agent配置",
       plugins: "插件管理",
       sessions: "会话",
+      services: "Services",
       skills: "技能",
     },
     modelToolsSheetSubtitle: "与工具",
@@ -527,6 +528,17 @@ export const zh: Translations = {
         "此浏览器不支持复制剪贴板图片 —— 请改用「下载」。",
       tweet_text: "Just unlocked {tier_part}\"{name}\" in Hermes Agent ☤",
     },
+  },
+
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Uses ~/.hermes/scripts/hermes-services.sh. Same controls as the legacy console on port 8790.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
   },
 
   kanban: {

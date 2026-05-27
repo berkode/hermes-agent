@@ -78,6 +78,7 @@ export const es: Translations = {
       profiles: "perfiles : multi agentes",
       plugins: "Complementos",
       sessions: "Sesiones",
+      services: "Services",
       skills: "Habilidades",
     },
     modelToolsSheetSubtitle: "y herramientas",
@@ -532,6 +533,17 @@ export const es: Translations = {
       tweet_text: "Just unlocked {tier_part}\"{name}\" in Hermes Agent ☤",
     },
   },
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Uses ~/.hermes/scripts/hermes-services.sh. Same controls as the legacy console on port 8790.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
+  },
+
   kanban: {
     loading: "Cargando tablero Kanban…",
     loadFailed: "Error al cargar el tablero Kanban: ",

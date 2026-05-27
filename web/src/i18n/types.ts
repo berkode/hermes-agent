@@ -94,6 +94,7 @@ export interface Translations {
       profiles: string;
       plugins: string;
       sessions: string;
+      services: string;
       skills: string;
     };
     modelToolsSheetSubtitle: string;
@@ -545,6 +546,16 @@ export interface Translations {
       clipboard_unsupported: string;
       tweet_text: string;
     };
+  };
+
+  services: {
+    subtitle: string;
+    manualNote: string;
+    startLlm: string;
+    startAll: string;
+    stopAll: string;
+    up: string;
+    down: string;
   };
 
   // ── Kanban ──

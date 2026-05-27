@@ -78,6 +78,7 @@ export const uk: Translations = {
       profiles: "профілі: мульти-агенти",
       plugins: "Плагіни",
       sessions: "Сесії",
+      services: "Services",
       skills: "Навички",
     },
     modelToolsSheetSubtitle: "та інструменти",
@@ -533,6 +534,17 @@ export const uk: Translations = {
       tweet_text: "Just unlocked {tier_part}\"{name}\" in Hermes Agent ☤",
     },
   },
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Uses ~/.hermes/scripts/hermes-services.sh. Same controls as the legacy console on port 8790.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
+  },
+
   kanban: {
     loading: "Завантаження дошки Kanban…",
     loadFailed: "Не вдалося завантажити дошку Kanban: ",

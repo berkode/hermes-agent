@@ -119,6 +119,10 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    "/api/services/status",
+    "/api/bejcapital/agents/status",
+    "/api/bejcapital/agents/runs",
+    "/api/bejcapital/agents/capabilities",
 })
 
 
@@ -638,6 +642,87 @@ async def get_status():
         "gateway_updated_at": gateway_updated_at,
         "active_sessions": active_sessions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Local service stack (hermes-services.sh) — manual Pimono / gateway toggles
+# ---------------------------------------------------------------------------
+
+@app.get("/api/services/status")
+async def get_services_status():
+    from hermes_cli.services_control import get_status_json
+
+    return get_status_json()
+
+
+@app.post("/api/services/{action}")
+async def post_services_bulk(action: str, request: Request):
+    from hermes_cli.services_control import run_services_action
+
+    _require_token(request)
+    if action not in ("start-llm", "start-all", "stop-all"):
+        raise HTTPException(status_code=404, detail="Unknown action")
+    return run_services_action(action)
+
+
+@app.post("/api/services/{action}/{service}")
+async def post_services_per_service(action: str, service: str, request: Request):
+    from hermes_cli.services_control import run_services_action
+
+    _require_token(request)
+    if action not in ("start", "stop", "toggle"):
+        raise HTTPException(status_code=404, detail="Unknown action")
+    return run_services_action(action, service)
+
+
+# ---------------------------------------------------------------------------
+# Bejcapital agency agent runtime (proxied to AGENCY backend on :8088 default)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/bejcapital/agents/status")
+async def bejcapital_agents_status():
+    from hermes_cli.bejcapital_agency import get_agent_status
+
+    return get_agent_status()
+
+
+@app.get("/api/bejcapital/agents/runs")
+async def bejcapital_agents_runs(limit: int = 50, status: str | None = None):
+    from hermes_cli.bejcapital_agency import list_runs
+
+    out = list_runs(limit=limit, status=status)
+    if out.get("error") and "runs" not in out:
+        return {"runs": [], "error": out.get("error"), "available": False}
+    out["available"] = out.get("available", True)
+    return out
+
+
+@app.post("/api/bejcapital/agents/runs")
+async def bejcapital_agents_runs_create(request: Request):
+    from hermes_cli.bejcapital_agency import create_run
+
+    _require_token(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body required")
+    return create_run(body)
+
+
+@app.get("/api/bejcapital/agents/capabilities")
+async def bejcapital_agents_capabilities():
+    from hermes_cli.bejcapital_agency import get_capabilities
+
+    return get_capabilities()
+
+
+@app.get("/api/bejcapital/agents/runs/{run_id}")
+async def bejcapital_agents_run_detail(run_id: str):
+    from hermes_cli.bejcapital_agency import get_run
+
+    out = get_run(run_id)
+    if out.get("error") and "run_id" not in out:
+        raise HTTPException(status_code=404, detail=out.get("error"))
+    return out
 
 
 # ---------------------------------------------------------------------------

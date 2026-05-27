@@ -78,6 +78,7 @@ export const zhHant: Translations = {
       profiles: "多代理設定檔",
       plugins: "外掛管理",
       sessions: "工作階段",
+      services: "Services",
       skills: "技能",
     },
     modelToolsSheetSubtitle: "與工具",
@@ -533,6 +534,17 @@ export const zhHant: Translations = {
       tweet_text: "Just unlocked {tier_part}\"{name}\" in Hermes Agent ☤",
     },
   },
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Uses ~/.hermes/scripts/hermes-services.sh. Same controls as the legacy console on port 8790.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
+  },
+
   kanban: {
     loading: "正在載入看板…",
     loadFailed: "載入看板失敗：",

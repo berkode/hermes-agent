@@ -33,6 +33,7 @@ import {
   Package,
   Puzzle,
   RotateCw,
+  Server,
   Settings,
   Shield,
   Sparkles,
@@ -42,6 +43,7 @@ import {
   Wrench,
   X,
   Zap,
+  Bot,
 } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { ListItem } from "@nous-research/ui/ui/components/list-item";
@@ -67,6 +69,8 @@ import ProfilesPage from "@/pages/ProfilesPage";
 import SkillsPage from "@/pages/SkillsPage";
 import PluginsPage from "@/pages/PluginsPage";
 import ChatPage from "@/pages/ChatPage";
+import ServicesPage from "@/pages/ServicesPage";
+import AgentsPage from "@/pages/AgentsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -107,6 +111,8 @@ const CHAT_NAV_ITEM: NavItem = {
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
+  "/services": ServicesPage,
+  "/agents": AgentsPage,
   "/sessions": SessionsPage,
   "/analytics": AnalyticsPage,
   "/models": ModelsPage,
@@ -129,6 +135,17 @@ function ChatRouteSink() {
 }
 
 const BUILTIN_NAV_REST: NavItem[] = [
+  {
+    path: "/services",
+    labelKey: "services",
+    label: "Services",
+    icon: Server,
+  },
+  {
+    path: "/agents",
+    label: "Agents",
+    icon: Bot,
+  },
   {
     path: "/sessions",
     labelKey: "sessions",
@@ -173,6 +190,7 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Package,
   Settings,
   Puzzle,
+  Server,
   Sparkles,
   Terminal,
   Globe,

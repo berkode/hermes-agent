@@ -78,6 +78,7 @@ export const en: Translations = {
       profiles: "Profiles",
       plugins: "Plugins",
       sessions: "Sessions",
+      services: "Services",
       skills: "Skills",
     },
     modelToolsSheetSubtitle: "& tools",
@@ -700,5 +701,16 @@ export const en: Translations = {
       "workspace path (optional, derived from assignee if blank)",
     logTruncated: "(showing last 100 KB — full log at ",
     logAt: ")",
+  },
+
+  services: {
+    subtitle: "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Bejcapital fleet control. Dashboard on :8000 replaces the old central agency. No LaunchAgents.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
   },
 };
