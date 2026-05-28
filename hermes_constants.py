@@ -16,6 +16,10 @@ _HERMES_HOME_OVERRIDE: ContextVar[str | object] = ContextVar(
     "_HERMES_HOME_OVERRIDE", default=_UNSET
 )
 
+# Lowercase sender label for outbound messaging (WhatsApp prefix, Matrix device, cron).
+DEFAULT_MESSAGING_SENDER_NAME = "hermes"
+DEFAULT_USER_ADDRESS_AS = "Master"
+
 
 def set_hermes_home_override(path: str | Path | None) -> Token:
     """Set a context-local Hermes home override and return its reset token.
@@ -430,6 +434,24 @@ def apply_ipv4_preference(force: bool = False) -> None:
 
     _ipv4_getaddrinfo._hermes_ipv4_patched = True  # type: ignore[attr-defined]
     socket.getaddrinfo = _ipv4_getaddrinfo  # type: ignore[assignment]
+
+
+def get_messaging_sender_name() -> str:
+    """Return the configured outbound messaging sender label (default: ``hermes``)."""
+    env_name = (os.getenv("HERMES_MESSAGING_SENDER_NAME") or "").strip()
+    if env_name:
+        return env_name
+    try:
+        from hermes_cli.config import load_config
+
+        display = load_config().get("display")
+        if isinstance(display, dict):
+            name = (display.get("messaging_sender_name") or "").strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    return DEFAULT_MESSAGING_SENDER_NAME
 
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"

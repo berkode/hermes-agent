@@ -1838,15 +1838,15 @@ def cmd_whatsapp(args):
             print("    2. Send a message to the bot's WhatsApp number")
             print("    3. The agent will reply automatically")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
+            print("  Tip: Set the bot contact name to 'hermes' in WhatsApp")
         else:
             print("  Next steps:")
             print("    1. Start the gateway:  hermes gateway")
             print("    2. Open WhatsApp → Message Yourself")
             print("    3. Type a message — the agent will reply")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
-            print("  so you can tell them apart from your own messages.")
+            print("  Tip: In self-chat mode, name the contact 'hermes' or set")
+            print("  whatsapp.reply_prefix in config.yaml if you want a body label.")
         print()
         print("  Or install as a service: hermes gateway install")
     else:
@@ -10334,10 +10334,27 @@ def cmd_dashboard(args):
 
     from hermes_cli.web_server import start_server
 
-    embedded_chat = args.tui or os.environ.get("HERMES_DASHBOARD_TUI") == "1"
+    embedded_chat = bool(args.tui) or os.environ.get("HERMES_DASHBOARD_TUI") == "1"
+    dash_cfg: dict = {}
+    try:
+        from hermes_cli.config import load_config
+
+        dash_cfg = load_config().get("dashboard") or {}
+        if not embedded_chat:
+            embedded_chat = bool(dash_cfg.get("embedded_chat"))
+    except Exception:
+        pass
+
+    dashboard_port = args.port
+    if dashboard_port == 9119 and dash_cfg.get("port") is not None:
+        try:
+            dashboard_port = int(dash_cfg["port"])
+        except (TypeError, ValueError):
+            pass
+
     start_server(
         host=args.host,
-        port=args.port,
+        port=dashboard_port,
         open_browser=not args.no_open,
         allow_public=getattr(args, "insecure", False),
         embedded_chat=embedded_chat,

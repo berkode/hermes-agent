@@ -100,7 +100,9 @@ class SessionSource:
         
         parts = []
         if self.chat_type == "dm":
-            parts.append(f"DM with {self.user_name or self.user_id or 'user'}")
+            from agent.prompt_builder import get_user_address_term
+
+            parts.append(f"DM with {get_user_address_term()}")
         elif self.chat_type == "group":
             parts.append(f"group: {self.chat_name or self.chat_id}")
         elif self.chat_type == "channel":
@@ -272,10 +274,10 @@ def build_session_context_prompt(
         # Build a description that respects PII redaction
         src = context.source
         if redact_pii:
-            # Build a safe description without raw IDs
-            _uname = src.user_name or (
-                _hash_sender_id(src.user_id) if src.user_id else "user"
-            )
+            from agent.prompt_builder import get_user_address_term
+
+            # Build a safe description without raw IDs or platform display names
+            _uname = get_user_address_term()
             _cname = src.chat_name or _hash_chat_id(src.chat_id)
             if src.chat_type == "dm":
                 desc = f"DM with {_uname}"
@@ -306,13 +308,15 @@ def build_session_context_prompt(
             f"**Session type:** {session_label} — messages are prefixed "
             "with [sender name]. Multiple users may participate."
         )
-    elif context.source.user_name:
-        lines.append(f"**User:** {context.source.user_name}")
-    elif context.source.user_id:
-        uid = context.source.user_id
-        if redact_pii:
-            uid = _hash_sender_id(uid)
-        lines.append(f"**User ID:** {uid}")
+    else:
+        from agent.prompt_builder import get_user_address_term
+
+        lines.append(f"**User:** {get_user_address_term()}")
+        if context.source.user_id:
+            uid = context.source.user_id
+            if redact_pii:
+                uid = _hash_sender_id(uid)
+            lines.append(f"**User ID:** {uid}")
 
     # Platform-specific behavioral notes
     if context.source.platform == Platform.SLACK:

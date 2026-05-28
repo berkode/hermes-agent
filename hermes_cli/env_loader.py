@@ -172,4 +172,28 @@ def load_hermes_dotenv(
         _load_dotenv_with_fallback(project_env_path, override=not loaded)
         loaded.append(project_env_path)
 
+    # Berkode / optional: load $HERMES_HOME/.env.encrypted via ~/.hermes/scripts hook.
+    # Keeps upstream Hermes env var names while secrets live encrypted on disk.
+    _load_encrypted_env_hook(home_path)
+
     return loaded
+
+
+def _load_encrypted_env_hook(home_path: Path) -> None:
+    encrypted = home_path / ".env.encrypted"
+    if not encrypted.is_file():
+        return
+    hook = Path.home() / ".hermes" / "scripts" / "hermes_encryption.py"
+    if not hook.is_file():
+        return
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("hermes_encryption", hook)
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.load_encrypted_env(home_path)
+    except Exception:
+        pass  # best-effort — plaintext .env still works

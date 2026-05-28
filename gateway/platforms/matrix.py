@@ -39,6 +39,8 @@ from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
+from hermes_constants import get_messaging_sender_name
+
 try:
     from mautrix.types import (
         ContentURI,
@@ -674,7 +676,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 resp = await client.login(
                     identifier=self._user_id,
                     password=self._password,
-                    device_name="Hermes Agent",
+                    device_name=get_messaging_sender_name(),
                     device_id=self._device_id or None,
                 )
                 if resp and hasattr(resp, "device_id"):

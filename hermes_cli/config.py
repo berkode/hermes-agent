@@ -586,6 +586,9 @@ DEFAULT_CONFIG = {
         # only controls how inbound user images are presented.
         "image_input_mode": "auto",
         "disabled_toolsets": [],
+        # Honorific for the human in replies and session context (never their
+        # legal or messaging display name). Override via HERMES_USER_ADDRESS_AS.
+        "user_address_as": "Master",
     },
     
     "terminal": {
@@ -1040,6 +1043,11 @@ DEFAULT_CONFIG = {
         # responses, log lines, tool outputs, or slash-command descriptions.
         # Supported: en, zh, ja, de, es, fr, tr, uk.  Unknown values fall back to en.
         "language": "en",
+        # Outbound messaging identity (lowercase). Matrix device name, email/HA
+        # titles, cron delivery headers, etc.
+        "messaging_sender_name": "hermes",
+        # Body prefix on platforms that support it (e.g. WhatsApp self-chat).
+        "messaging_reply_prefix": "",
         # TUI busy indicator style: kaomoji (default), emoji, unicode (braille
         # spinner), or ascii.  Live-swappable via `/indicator <style>`.
         "tui_status_indicator": "kaomoji",
@@ -1074,6 +1082,9 @@ DEFAULT_CONFIG = {
     # Web dashboard settings
     "dashboard": {
         "theme": "default",  # Dashboard visual theme: "default", "midnight", "ember", "mono", "cyberpunk", "rose"
+        # In-browser Chat tab (embedded ``hermes --tui``). Also: ``hermes dashboard --tui``
+        # or HERMES_DASHBOARD_TUI=1.
+        "embedded_chat": False,
         # Hide the token/cost analytics surfaces (Analytics page, token bars and
         # cost figures on the Models page) by default.  The numbers shown there
         # are a local debug estimate: they only count successful main-agent
@@ -1386,10 +1397,9 @@ DEFAULT_CONFIG = {
 
     # WhatsApp platform settings (gateway mode)
     "whatsapp": {
-        # Reply prefix prepended to every outgoing WhatsApp message.
-        # Default (None) uses the built-in "⚕ *Hermes Agent*" header.
-        # Set to "" (empty string) to disable the header entirely.
-        # Supports \n for newlines, e.g. "🤖 *My Bot*\n──────\n"
+        # Reply prefix prepended in self-chat mode (bot and user share one number).
+        # Supports \n for newlines.
+        "reply_prefix": "hermes\n",
     },
 
     # Telegram platform settings (gateway mode)
@@ -2342,6 +2352,55 @@ OPTIONAL_ENV_VARS = {
         "description": "GitHub token for Skills Hub (higher API rate limits, skill publish)",
         "prompt": "GitHub Token",
         "url": "https://github.com/settings/tokens",
+        "password": True,
+        "category": "tool",
+    },
+    "X_API_KEY": {
+        "description": "X API consumer key (OAuth 1.0a / xurl)",
+        "prompt": "X API Key",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": True,
+        "category": "tool",
+    },
+    "X_API_SECRET": {
+        "description": "X API consumer secret (OAuth 1.0a / xurl)",
+        "prompt": "X API Secret",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": True,
+        "category": "tool",
+    },
+    "X_ACCESS_TOKEN": {
+        "description": "X user access token (OAuth 1.0a / xurl)",
+        "prompt": "X Access Token",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": True,
+        "category": "tool",
+    },
+    "X_ACCESS_TOKEN_SECRET": {
+        "description": "X user access token secret (OAuth 1.0a / xurl)",
+        "prompt": "X Access Token Secret",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": True,
+        "category": "tool",
+    },
+    "X_CLIENT_ID": {
+        "description": "X OAuth 2.0 client ID (xurl; Native App only)",
+        "prompt": "X OAuth2 Client ID",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": False,
+        "category": "tool",
+    },
+    "X_CLIENT_SECRET": {
+        "description": "X OAuth 2.0 client secret (xurl)",
+        "prompt": "X OAuth2 Client Secret",
+        "url": "https://developer.x.com/en/portal/dashboard",
+        "password": True,
+        "category": "tool",
+    },
+    "X_BEARER": {
+        "description": "X app-only bearer token (read-only endpoints)",
+        "prompt": "X Bearer Token",
+        "url": "https://developer.x.com/en/portal/dashboard",
         "password": True,
         "category": "tool",
     },

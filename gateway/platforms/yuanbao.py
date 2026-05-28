@@ -48,6 +48,7 @@ except ImportError:
     websockets = None  # type: ignore[assignment]
 
 from gateway.config import Platform, PlatformConfig
+from hermes_constants import get_messaging_sender_name
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
@@ -4378,7 +4379,12 @@ class MessageSender:
     @staticmethod
     def strip_cron_wrapper(content: str) -> str:
         """Strip scheduler cron header/footer wrapper for cleaner Yuanbao output."""
-        if not content.startswith("Cronjob Response: "):
+        legacy_prefix = "Cronjob Response: "
+        sender_prefix = f"{get_messaging_sender_name()} · "
+        if not (
+            content.startswith(legacy_prefix)
+            or content.startswith(sender_prefix)
+        ):
             return content
 
         divider = "\n-------------\n\n"

@@ -310,6 +310,8 @@ def _run_agent(
     if isinstance(_fb, dict):
         _fb = [_fb] if _fb.get("provider") and _fb.get("model") else []
 
+    _ignore_rules = os.environ.get("HERMES_IGNORE_RULES") == "1"
+
     agent = AIAgent(
         api_key=runtime.get("api_key"),
         base_url=runtime.get("base_url"),
@@ -322,6 +324,8 @@ def _run_agent(
         session_db=session_db,
         credential_pool=runtime.get("credential_pool"),
         fallback_model=_fb or None,
+        skip_context_files=_ignore_rules,
+        skip_memory=_ignore_rules,
         # Interactive callbacks are intentionally NOT wired beyond this
         # one.  In oneshot mode there's no user sitting at a terminal:
         #   - clarify  → returns a synthetic "pick a default" instruction

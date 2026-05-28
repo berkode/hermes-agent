@@ -132,7 +132,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 # =========================================================================
 
 DEFAULT_AGENT_IDENTITY = (
-    "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+    "You are hermes, an intelligent AI assistant created by Nous Research. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
     "analyzing information, creative work, and executing actions via your tools. "
@@ -142,10 +142,43 @@ DEFAULT_AGENT_IDENTITY = (
 )
 
 HERMES_AGENT_HELP_GUIDANCE = (
-    "If the user asks about configuring, setting up, or using Hermes Agent "
+    "If the user asks about configuring, setting up, or using hermes "
     "itself, load the `hermes-agent` skill with skill_view(name='hermes-agent') "
     "before answering. Docs: https://hermes-agent.nousresearch.com/docs"
 )
+
+_DEFAULT_USER_ADDRESS_AS = "Master"
+
+
+def get_user_address_term(config: Optional[dict] = None) -> str:
+    """Return the configured honorific for the human (``agent.user_address_as``)."""
+    term = (os.getenv("HERMES_USER_ADDRESS_AS") or "").strip()
+    if term:
+        return term
+    if config is None:
+        try:
+            from hermes_cli.config import load_config
+
+            config = load_config()
+        except Exception:
+            config = {}
+    if isinstance(config, dict):
+        agent_cfg = config.get("agent")
+        if isinstance(agent_cfg, dict):
+            term = (agent_cfg.get("user_address_as") or "").strip()
+    return term or _DEFAULT_USER_ADDRESS_AS
+
+
+def build_user_address_guidance(config: Optional[dict] = None) -> str:
+    """System-prompt block: how to address the human and privacy for real names."""
+    term = get_user_address_term(config)
+    return (
+        f'Address the human only as "{term}". Never use their legal name, '
+        "messaging display name, or email display name in replies, even if you "
+        "infer them from context or tools. Do not store real names in memory "
+        "(MEMORY.md); email/Himalaya workflows may use real names operationally — "
+        "do not repeat them in chat."
+    )
 
 MEMORY_GUIDANCE = (
     "You have persistent memory across sessions. Save durable facts using the memory "

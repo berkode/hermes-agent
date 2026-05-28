@@ -804,6 +804,11 @@ def load_gateway_config() -> GatewayConfig:
                     if _plat not in _shared_loop_targets:
                         _shared_loop_targets.append(_plat)
 
+            _global_messaging_reply_prefix = None
+            _display_cfg = yaml_cfg.get("display")
+            if isinstance(_display_cfg, dict) and "messaging_reply_prefix" in _display_cfg:
+                _global_messaging_reply_prefix = _display_cfg["messaging_reply_prefix"]
+
             for plat in _shared_loop_targets:
                 if plat == Platform.LOCAL:
                     continue
@@ -824,6 +829,8 @@ def load_gateway_config() -> GatewayConfig:
                     )
                 if "reply_prefix" in platform_cfg:
                     bridged["reply_prefix"] = platform_cfg["reply_prefix"]
+                elif _global_messaging_reply_prefix is not None:
+                    bridged["reply_prefix"] = _global_messaging_reply_prefix
                 if "reply_in_thread" in platform_cfg:
                     bridged["reply_in_thread"] = platform_cfg["reply_in_thread"]
                 if "require_mention" in platform_cfg:

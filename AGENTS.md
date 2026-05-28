@@ -1102,3 +1102,28 @@ not the specific names.
 
 Reviewers should reject new change-detector tests; authors should convert
 them into invariants before re-requesting review.
+
+## Learned User Preferences
+
+- Berkode Mac setup: slow machine with limited capacity — avoid heavy background load; keep delegation concurrency low (about 2 parallel children on ops/bej).
+- Do not add macOS LaunchAgents for Hermes, BejMind, Pimono, or gateway; user starts and stops services manually via `hermes dashboard` (http://127.0.0.1:8000 — Services tab uses `hermes_cli/bejcapital_fleet.py` for the full bejcapital fleet; replaces the old central agency on :8000). Legacy stdlib console optional at http://127.0.0.1:8790/.
+- Keep Hermes app code in the git clone separate from personal/business state in `~/.hermes`; update upstream with `git fetch upstream` and `hermes update` without touching profile data.
+- Email and social are draft-only with human approval before send/post; X app **bejhermes** is approved — use OAuth 1.0a (`setup-xurl-bejhermes-oauth1.sh`) or Native App + xurl oauth2 (Web App `:ci` breaks xurl PKCE).
+- Bejcapital-first: trading research and platform ops (`bej` profile) before general Mac workers (`ops`) and social automation.
+- Default Hermes profile is `bej` (`hermes profile use bej`); prefer Discord (one bot + home channel) over Telegram for cron delivery and mobile alerts.
+- Weekday bej brief may auto-create up to 3 `[brief]` Kanban tasks on board `berkode-ops` when follow-up work is needed.
+- Prefer minimal, focused diffs in this repo unless the user asks for broader changes.
+
+## Learned Workspace Facts
+
+- Hermes code: `/Users/morpheus/berkode/hermes-agent`; git `origin` is the berkode fork, `upstream` is `https://github.com/NousResearch/hermes-agent.git`. If fetch/commit fails on `.git/logs`, root-owned refs from past `sudo` — fix with `sudo chown -R "$(whoami):staff" .git/logs` in the clone.
+- User state: `~/.hermes/` with profiles `bej`, `ops`, and `social`; runbooks at `~/.hermes/SETUP_BERKODE.md` and `~/.hermes/automation/` (e.g. `PHASE_E_MCP_AND_OPS.md`, `setup/DISCORD_SETUP.md`).
+- Bejcapital repo: `/Users/morpheus/berkode/bejcapital`; `terminal.cwd` for bej/ops/social profiles points there; after secret edits run `bash ~/.hermes/scripts/bejcapital-propagate-env.sh --encrypt` then `python3 ~/.hermes/scripts/sync-keys-from-bejcapital.py`. Propagate platforms: `agency`, `bejtrader`, `predictx`, `bejmind`, `bejresearch`, `hermes` (tag secrets `# platforms: hermes` in staging `config/.env.encrypt` before encrypt).
+- LLM for Hermes: BejMind Pimono on port 3099, OpenAI-compatible proxy on `http://127.0.0.1:5102/v1` (`bejcapital/bejmind`); keys from bejmind encrypted env; model `openrouter/owl-alpha` for default/bej/ops/social (`gpt-4o-mini` returns empty via Pimono); keep `max_tokens` ≤300 on the Pimono path; proxy must forward full OpenAI messages and tools or tool calling breaks (raw longcat XML in responses).
+- Profile secrets: **runtime reads only** `$HERMES_HOME/.env.encrypted`. Edit master secrets in `bejcapital/config/.env.encrypt` (kept after encrypt; user deletes manually). Hermes `profiles/*/.env.encrypt` is staging only — removed after encrypt (view via `python3 ~/.hermes/scripts/hermes_encryption.py decrypt-count --home …` or decrypt in Python). Platform `.env.encrypt` under bejcapital may auto-delete on encrypt or be removed manually. Audit: `bash ~/.hermes/scripts/audit-env-staging.sh`. Sync decrypts bejcapital `config/.env.encrypted` only; **X_* → `profiles/social` only**. X setup: `bash ~/.hermes/scripts/setup-x-social.sh`.
+- Set `UV_CACHE_DIR=/Users/morpheus/berkode/hermes-agent/.uv-cache` (system `~/.cache/uv` is root-owned on this Mac).
+- Use the repo `venv` and `uv` for Hermes CLI and installs (`source venv/bin/activate`, export `UV_CACHE_DIR` when using uv).
+- Gateway runs manually from default `~/.hermes` via `hermes-services.sh` (profile `cron status` may falsely say gateway down). Briefs and ops crons deliver to Discord; `bej cron edit <id> --deliver discord` (bare `cron edit` returns "No updates provided").
+- CLI local backend: absolute `terminal.cwd` in profile config wins over shell cwd (`cli.py`); `~/.local/bin/bej` and `ops` wrappers `cd` to bejcapital for `chat`/`--tui`. Do not put inline shell `#` comments on the same line as `bej chat` (breaks the wrapper).
+- Cron scripts: Hermes blocks symlinks — copy shared scripts with `bash ~/.hermes/scripts/sync-profile-scripts.sh` (also runs env sync). `health-check.sh` uses Python for HTTP (MacPorts `curl` SIGABRTs on this Mac).
+- `xurl` is at `~/.local/bin/xurl`; Himalaya at `~/.local/bin/himalaya` — config at `~/.config/himalaya/config.toml` (not the hermes-agent repo); keychain passwords via `bash ~/.hermes/scripts/himalaya-store-gmail-password.sh`.

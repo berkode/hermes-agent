@@ -496,7 +496,15 @@ def load_cli_config() -> Dict[str, Any]:
     effective_backend = terminal_config.get("env_type", "local")
 
     if effective_backend == "local":
-        terminal_config["cwd"] = os.getcwd()
+        configured_cwd = terminal_config.get("cwd")
+        if (
+            configured_cwd
+            and configured_cwd not in _CWD_PLACEHOLDERS
+            and Path(configured_cwd).is_dir()
+        ):
+            terminal_config["cwd"] = str(Path(configured_cwd).resolve())
+        else:
+            terminal_config["cwd"] = os.getcwd()
         defaults["terminal"]["cwd"] = terminal_config["cwd"]
     elif terminal_config.get("cwd") in _CWD_PLACEHOLDERS:
         terminal_config.pop("cwd", None)

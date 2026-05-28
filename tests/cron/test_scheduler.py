@@ -511,7 +511,7 @@ class TestDeliverResultWrapping:
 
         send_mock.assert_called_once()
         sent_content = send_mock.call_args.kwargs.get("content") or send_mock.call_args[0][-1]
-        assert "Cronjob Response: daily-report" in sent_content
+        assert "hermes · daily-report" in sent_content
         assert "(job_id: test-job)" in sent_content
         assert "-------------" in sent_content
         assert "Here is today's summary." in sent_content
@@ -536,7 +536,7 @@ class TestDeliverResultWrapping:
             _deliver_result(job, "Output.")
 
         sent_content = send_mock.call_args.kwargs.get("content") or send_mock.call_args[0][-1]
-        assert "Cronjob Response: abc-123" in sent_content
+        assert "hermes · abc-123" in sent_content
 
     def test_delivery_skips_wrapping_when_config_disabled(self):
         """When cron.wrap_response is false, deliver raw content without header/footer."""
@@ -561,7 +561,7 @@ class TestDeliverResultWrapping:
         send_mock.assert_called_once()
         sent_content = send_mock.call_args.kwargs.get("content") or send_mock.call_args[0][-1]
         assert sent_content == "Clean output only."
-        assert "Cronjob Response" not in sent_content
+        assert "hermes ·" not in sent_content
         assert "The agent cannot see" not in sent_content
 
     def test_delivery_extracts_media_tags_before_send(self):

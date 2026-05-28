@@ -242,7 +242,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
     # WhatsApp message limits — practical UX limit, not protocol max.
     # WhatsApp allows ~65K but long messages are unreadable on mobile.
     MAX_MESSAGE_LENGTH = 4096
-    DEFAULT_REPLY_PREFIX = "⚕ *Hermes Agent*\n────────────\n"
+    DEFAULT_REPLY_PREFIX = "hermes\n"
     
     # Default bridge location relative to the hermes-agent install
     _DEFAULT_BRIDGE_DIR = Path(__file__).resolve().parents[2] / "scripts" / "whatsapp-bridge"
@@ -614,8 +614,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
             # Pass WHATSAPP_REPLY_PREFIX from config.yaml so the Node bridge
             # can use it without the user needing to set a separate env var.
             bridge_env = os.environ.copy()
-            if self._reply_prefix is not None:
-                bridge_env["WHATSAPP_REPLY_PREFIX"] = self._reply_prefix
+            # Always pass prefix so the bridge never falls back to a stale default.
+            bridge_env["WHATSAPP_REPLY_PREFIX"] = self._effective_reply_prefix()
 
             self._bridge_process = subprocess.Popen(
                 [
@@ -1176,12 +1176,14 @@ class WhatsAppAdapter(BasePlatformAdapter):
             chat_type = "group" if is_group else "dm"
             
             # Build source
+            # Do not pass WhatsApp push/display names into the LLM session
+            # context — operators may use legal names on WA; routing uses user_id.
             source = self.build_source(
                 chat_id=data.get("chatId", ""),
                 chat_name=data.get("chatName"),
                 chat_type=chat_type,
                 user_id=data.get("senderId"),
-                user_name=data.get("senderName"),
+                user_name=None,
             )
             
             # Download media URLs to the local cache so agent tools
