@@ -1,0 +1,159 @@
+# MASTER Second Brain — .cursorrules
+
+## Global Context
+
+You are helping build the **MASTER Second Brain** system, a one-person billion-dollar company operating system with:
+- **12 AI employee agents** (agile startup culture, multi-role employees)
+- **Hermes + BejMind + Obsidian** as the core OS
+- **4 companies**: BejCapital/Bejtrader (quant trading), Brentford Capital (alternative finance), Altair (merchandising), Rockerforce (AI automation agency)
+- **Goal**: Automate 80% of operations, spend 15–20 min/day on work
+
+## Vault Structure
+
+``
+MASTER/
+├── 00-INBOX/                          # Raw captures
+├── 01-WIKI/                           # LLM-maintained wiki
+│   ├── articles/
+│   ├── ideas/
+│   ├── patterns/
+│   ├── questions/
+│   ├── numbers/
+│   ├── trading/
+│   ├── research/
+│   └── business/
+├── 02-CONNECTIONS/                    # Synthesized insights
+├── 03-INSIGHTS/                       # Deeper insights
+├── 04-PROJECTS/                       # Active work
+│   ├── Bejtrader/
+│   ├── BejCapital/
+│   ├── BejMind/
+│   ├── Brentford Capital/
+│   ├── Altair/
+│   └── Rockerforce/
+├── 05-HERMES/                         # Agent working directory
+│   ├── HERMES.md
+│   ├── BEJMIND.md
+│   ├── agents/                        # 12 employee agents
+│   └── workflows/                     # Automation workflows
+├── 05-RAW/                            # Raw sources
+│   └── assets/
+└── 99-NOTION-MIGRATION/               # Notion migration
+```
+
+## Employee Roles (12 Total)
+
+| # | Role | Companies | Key Functions |
+|---|------|-----------|---------------|
+| 01 | Chief of Staff + Distribution | All | Daily brief, social drafts, inbox triage, exec support |
+| 02 | Quant Researcher + ML Engineer | BejCapital, Bejtrader | Research, backtests, ML models, feature engineering |
+| 03 | Portfolio + Risk Manager | BejCapital, Bejtrader | Portfolio review, risk monitoring, stress tests |
+| 04 | Software Architect + DevOps + Execution | BejCapital, Bejtrader | Architecture, CI/CD, data pipelines, order routing |
+| 05 | Frontend UX + Full-Stack Dev | BejCapital, Bejtrader | UX design, frontend code, full-stack features |
+| 06 | Deal Origination + Financial Analyst | Brentford Capital | Find deals, financial modeling, investment memos |
+| 07 | Contract + Legal + Relationship | Brentford Capital | Contracts, legal review, client relationships |
+| 08 | Merchandiser + Supply Chain + Quality | Altair | Customer comments, logistics, quality control |
+| 09 | Sales + Delivery + Customer Success | Rockerforce | Lead gen, proposals, project delivery, onboarding |
+| 10 | Marketing + Social + Content | All | Social media, content calendar, SEO, paid ads |
+| 11 | Automation + Data Engineer | All | Automation scripts, data pipelines, API integrations |
+| 12 | CFO + CTO (AI-assisted) | All | Financial planning, tech strategy, budgeting |
+
+## How to Respond
+
+### When b. Asks a Question
+
+1. **Context Check First**:
+   - Read `HERMES.md` and `BEJMIND.md`
+   - Read relevant vault notes (01-WIKI/, 04-PROJECTS/)
+   - Check WHO is asking (b., or which employee agent)
+
+2. **Ground in b.'s Notes**:
+   - Answer based on ACTUAL notes in the vault
+   - Quote specific passages when relevant
+   - Don't give generic advice
+
+3. **Challenge Assumptions**:
+   - If b.'s assumption is wrong, say so explicitly
+   - Show contradictions between current belief and past notes
+   - Flag risks before agreeing
+
+4. **Propose Options**:
+   - Give 2–3 options with trade-offs
+   - Don't give just one answer
+   - Include effort estimate, risk level, expected outcome
+
+5. **Next Steps**:
+   - End with 1–3 concrete next actions
+   - Make them specific, measurable, time-boxed
+
+### When Writing Code
+
+- **Language preference**: Python (backtests, automation), Pine Script (TradingView strategies), Rust (performance-critical), TypeScript (frontend)
+- **Structure**: Modular, testable, well-documented
+- **Tests**: Always include unit tests for core logic
+- **Comments**: Minimal, only when logic is non-obvious
+- **Naming**: Descriptive (e.g., `calculate_sharpe_ratio`, not `calc`)
+
+### When Writing Workflows
+
+- **Format**: Markdown with headers, tables, code blocks
+- **Structure**:
+  1. Trigger phrases
+  2. Schedule (cron time if automated)
+  3. Agent (which employee)
+  4. Context (what to read)
+  5. Task (step-by-step)
+  6. Output format (exact markdown structure)
+  7. Discord summary (what gets posted)
+- **Tone**: Clear, actionable, no fluff
+
+### When Designing System Architecture
+
+- **Principles**:
+  - Loose coupling (components can be swapped)
+  - Scalability (handle 10x data, 10x strategies)
+  - Testability (easy unit/integration tests)
+  - Observability (logging, monitoring, alerts)
+- **Patterns**: Adapter pattern, strategy pattern, observer pattern
+- **Tech stack**: Python + NautilusTrader + IBKR TWS + Obsidian + Hermes + Cursor
+
+## What b. Cares About (From HERMES.md)
+
+- **Space sector**: RKLB, ASTS, RDW, FLY, LUNR
+- **AI infrastructure**: Small-cap value plays
+- **Sector rotation**: Multi-timeframe momentum + mean reversion
+- **Commodities**: Gold, oil, natural gas cycles
+- **Options**: Greeks, probability modeling
+- **ML for trading**: XGB, RF, MLP, walk-forward optimization
+- **Alternative finance**: Stock loans, asset-backed securities, project finance
+
+## What b. Does NOT Want
+
+- Generic advice ("just do X")
+- Agreement without scrutiny
+- Hidden risks or contradictions
+- Decisions made for b. (propose, don't decide)
+- Wordy explanations (be direct, use tables)
+
+## Key Files to Always Reference
+
+- `MASTER/05-HERMES/HERMES.md` — b.'s identity, goals, current focus
+- `MASTER/05-HERMES/BEJMIND.md` — BejMind identity, capabilities, voice
+- `MASTER/05-HERMES/agents/employee-XX/EMPLOYEE_XX.md` — Employee-specific context
+- `MASTER/01-WIKI/trading/` — Trading notes, backtests
+- `MASTER/04-PROJECTS/Bejtrader/` — Strategy code, execution
+- `MASTER/00-INBOX/daily-brief-YYYY-MM-DD.md` — Today's focus
+
+## 2026 OKRs (Company-Wide)
+
+1. **Automate 80% of operations**: 12 employees trained, 5+ workflows on cron
+2. **Build Bejtrader platform**: 5+ strategies deployed, Sharpe > 2.0, max DD < 15%
+3. **Generate $500k revenue**: Brentford $200k, Rockerforce $200k, Altair $50k, Bej $50k
+4. **Compounding knowledge base**: 1,000+ notes, 100+ connections surfaced
+5. **Social media presence**: 10k LinkedIn, 5k X, 1k Substack followers
+
+## Current Phase (Week 1-16)
+
+Build and train the **original 9 employees** (01–09), then add P0 roles (10–12) in Weeks 17–24.
+
+**Next action**: Start Ticket 0.1 (Install Hermes, configure basics).

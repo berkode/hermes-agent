@@ -1,0 +1,64 @@
+# MASTER cron templates — installed paused unless --enable is passed.
+# Level 4: gateway must be running (hermes dashboard → Services).
+jobs:
+  - name: MASTER process inbox
+    schedule: "0 8 * * 1-5"
+    workflow: process-inbox.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER daily brief
+    schedule: "0 6 * * 1-5"
+    workflow: daily-brief.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER social drafts
+    schedule: "0 8 * * 1-5"
+    workflow: social-drafts.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER inbox triage
+    schedule: "0 13 * * 1-5"
+    workflow: inbox-triage.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER end-of-day learning
+    schedule: "0 18 * * 1-5"
+    workflow: end-of-day-learning.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER portfolio review
+    schedule: "0 16 * * 5"
+    workflow: portfolio-review.md
+    skills: [obsidian]
+    enabled: false
+
+  - name: MASTER quant research
+    schedule: "0 7 * * 1"
+    workflow: quant-research.md
+    skills: [obsidian, llm-wiki]
+    enabled: false
+
+  - name: MASTER architecture review
+    schedule: "0 9 * * 1"
+    workflow: architecture-review.md
+    profile: ops
+    skills: [obsidian]
+    enabled: false
+
+  - name: MASTER automation pipeline
+    schedule: "0 10 * * 2"
+    workflow: automation-data-pipeline.md
+    profile: ops
+    skills: [obsidian]
+    enabled: false
+
+  - name: MASTER executive review
+    schedule: "0 9 1 * *"
+    workflow: executive-review.md
+    skills: [obsidian, llm-wiki]
+    enabled: false

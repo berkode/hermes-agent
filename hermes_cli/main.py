@@ -12808,6 +12808,58 @@ Examples:
     claw_parser.set_defaults(func=cmd_claw)
 
     # =========================================================================
+    # master command (MASTER second-brain vault)
+    # =========================================================================
+    master_parser = subparsers.add_parser(
+        "master",
+        help="MASTER Obsidian vault scaffold and cron templates",
+        description="Scaffold the MASTER second-brain vault and optional cron jobs",
+    )
+    master_subparsers = master_parser.add_subparsers(dest="master_action")
+
+    master_init = master_subparsers.add_parser(
+        "init",
+        help="Create vault folders and copy templates from docs/MASTER_Second_Brain plan",
+    )
+    master_init.add_argument(
+        "--vault-path",
+        default=str(Path.home() / "Master"),
+        help="Obsidian vault directory (default: ~/Master)",
+    )
+    master_init.add_argument(
+        "--source",
+        help="Override template source directory (default: repo docs/MASTER_Second_Brain plan)",
+    )
+    master_init.add_argument("--dry-run", action="store_true")
+    master_init.add_argument("--overwrite", action="store_true")
+    master_init.add_argument("--profile", default="bej", help="Profile name for setup hints")
+
+    master_cron = master_subparsers.add_parser(
+        "install-cron",
+        help="Install paused cron jobs from workflow templates",
+    )
+    master_cron.add_argument(
+        "--vault-path",
+        default=str(Path.home() / "Master"),
+        help="Obsidian vault directory (default: ~/Master)",
+    )
+    master_cron.add_argument("--profile", default="bej")
+    master_cron.add_argument("--deliver", default="discord")
+    master_cron.add_argument(
+        "--enable",
+        action="store_true",
+        help="Create jobs enabled (default: paused)",
+    )
+    master_cron.add_argument("--dry-run", action="store_true")
+
+    def cmd_master(args):
+        from hermes_cli.master import master_command
+
+        master_command(args)
+
+    master_parser.set_defaults(func=cmd_master)
+
+    # =========================================================================
     # version command
     # =========================================================================
     version_parser = subparsers.add_parser("version", help="Show version information")
