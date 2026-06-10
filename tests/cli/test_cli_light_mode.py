@@ -75,6 +75,20 @@ class TestLightModeDetection:
         monkeypatch.setenv("HERMES_LIGHT", "0")
         assert cli_mod._detect_light_mode() is True
 
+    def test_osc11_skipped_on_ssh(self, cli_mod, monkeypatch):
+        monkeypatch.delenv("HERMES_LIGHT", raising=False)
+        monkeypatch.delenv("HERMES_TUI_LIGHT", raising=False)
+        monkeypatch.delenv("HERMES_TUI_THEME", raising=False)
+        monkeypatch.setenv("SSH_CONNECTION", "127.0.0.1 12345 127.0.0.1 22")
+        assert cli_mod._osc11_probe_disabled() is True
+
+        def _fail_osc11():
+            raise AssertionError("OSC 11 must not run over SSH")
+
+        monkeypatch.setattr(cli_mod, "_query_osc11_background", _fail_osc11)
+        cli_mod._LIGHT_MODE_CACHE = None
+        assert cli_mod._detect_light_mode() is False
+
 
 class TestLightModeRemap:
     def test_remap_no_op_in_dark_mode(self, cli_mod, monkeypatch):

@@ -253,11 +253,25 @@ def check_for_updates() -> Optional[int]:
         # Path(__file__) always resolves to the actual installed checkout.
         repo_dir = Path(__file__).parent.parent.resolve()
         if not (repo_dir / ".git").exists():
-            repo_dir = hermes_home / "hermes-agent"
-        if not (repo_dir / ".git").exists():
-            behind = check_via_pypi()
-        else:
+            alt = hermes_home / "hermes-agent"
+            # Only fall back when the home copy is a real git checkout.
+            if (alt / ".git").exists():
+                repo_dir = alt
+        if (repo_dir / ".git").exists():
             behind = _check_via_local_git(repo_dir)
+        else:
+            try:
+                from hermes_cli.config import is_hermes_source_tree
+
+                # Rsync / editable installs without .git: deps refresh via
+                # ``hermes update`` — do not compare against PyPI (misreports
+                # "1 commit behind" when PyPI is newer than the fork tag).
+                if is_hermes_source_tree(repo_dir):
+                    behind = 0
+                else:
+                    behind = check_via_pypi()
+            except Exception:
+                behind = check_via_pypi()
 
     try:
         cache_file.write_text(json.dumps({"ts": now, "behind": behind, "rev": embedded_rev}))

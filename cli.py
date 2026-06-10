@@ -1353,6 +1353,37 @@ _FALSE_RE = re.compile(r"^(0|false|off|no|n)$")
 _LIGHT_DEFAULT_TERM_PROGRAMS = frozenset()  # Apple_Terminal doesn't reliably indicate; require explicit
 
 
+def _osc11_probe_disabled() -> bool:
+    """Return True when OSC 11 must not run (SSH leaks into prompt_toolkit)."""
+    if os.environ.get("HERMES_DISABLE_OSC11", "").strip().lower() in {
+        "1", "true", "on", "yes", "y",
+    }:
+        return True
+    if any(os.environ.get(v) for v in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")):
+        return True
+    return False
+
+
+def _drain_stdin_bytes(fd: int, timeout_sec: float = 0.15) -> None:
+    """Discard any pending stdin bytes (OSC/BEL tail after a probe)."""
+    import select
+
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        wait = min(0.02, deadline - time.monotonic())
+        if wait <= 0:
+            break
+        rlist, _, _ = select.select([fd], [], [], wait)
+        if not rlist:
+            continue
+        try:
+            chunk = os.read(fd, 256)
+        except OSError:
+            break
+        if not chunk:
+            break
+
+
 def _luminance_from_hex(hex_str: str) -> float | None:
     s = (hex_str or "").strip().lstrip("#")
     if len(s) == 3:
@@ -1376,6 +1407,8 @@ def _query_osc11_background() -> str | None:
     """
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return None
+    if _osc11_probe_disabled():
+        return None
     try:
         import termios
         import tty
@@ -1383,6 +1416,7 @@ def _query_osc11_background() -> str | None:
         old = termios.tcgetattr(fd)
     except Exception:
         return None
+    probe_ran = False
     try:
         try:
             tty.setcbreak(fd)
@@ -1391,6 +1425,7 @@ def _query_osc11_background() -> str | None:
         try:
             sys.stdout.write("\x1b]11;?\x1b\\")
             sys.stdout.flush()
+            probe_ran = True
         except Exception:
             return None
         # Read up to ~50ms for the response
@@ -1421,21 +1456,13 @@ def _query_osc11_background() -> str | None:
             bits = len(h) * 4
             return (v * 255) // ((1 << bits) - 1) if bits else 0
         r, g, b = norm(m.group(1)), norm(m.group(2)), norm(m.group(3))
-        # Drain any trailing BEL/ST bytes so prompt_toolkit does not interpret
-        # ^G (BEL) as Ctrl+G and open $EDITOR (nano) on SSH terminals.
-        drain_deadline = time.monotonic() + 0.05
-        while time.monotonic() < drain_deadline:
-            rlist, _, _ = select.select([fd], [], [], drain_deadline - time.monotonic())
-            if not rlist:
-                break
-            try:
-                extra = os.read(fd, 64)
-            except OSError:
-                break
-            if not extra:
-                break
         return f"#{r:02X}{g:02X}{b:02X}"
     finally:
+        if probe_ran:
+            try:
+                _drain_stdin_bytes(fd)
+            except Exception:
+                pass
         try:
             termios.tcsetattr(fd, termios.TCSANOW, old)
         except Exception:
@@ -1578,9 +1605,9 @@ _install_skin_light_mode_hook()
 
 # Prime the light-mode detection cache early (at module load) when
 # we're running interactively so OSC 11 happens before pt grabs the
-# tty.  Skip for non-tty contexts (subagents, gateway, tests).
+# tty.  Skip for non-tty contexts (subagents, gateway, tests) and SSH.
 try:
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if sys.stdin.isatty() and sys.stdout.isatty() and not _osc11_probe_disabled():
         _detect_light_mode()
 except Exception:
     pass

@@ -59,7 +59,7 @@ def test_check_for_updates_expired_cache(tmp_path, monkeypatch):
 
 
 def test_check_for_updates_no_git_dir(tmp_path, monkeypatch):
-    """Falls back to PyPI check when .git directory doesn't exist anywhere."""
+    """Falls back to PyPI check when not a source tree and .git is missing."""
     import hermes_cli.banner as banner
 
     # Create a fake banner.py so the fallback path also has no .git
@@ -71,9 +71,34 @@ def test_check_for_updates_no_git_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     with patch("hermes_cli.banner.subprocess.run") as mock_run:
         with patch("hermes_cli.banner.check_via_pypi", return_value=0):
-            result = banner.check_for_updates()
+            with patch("hermes_cli.config.is_hermes_source_tree", return_value=False):
+                result = banner.check_for_updates()
     assert result == 0
     mock_run.assert_not_called()
+
+
+def test_check_for_updates_source_tree_without_git(tmp_path, monkeypatch):
+    """Rsync/editable installs without .git should not compare against PyPI."""
+    import hermes_cli.banner as banner
+
+    repo_dir = tmp_path / "hermes-agent"
+    (repo_dir / "hermes_cli").mkdir(parents=True)
+    (repo_dir / "pyproject.toml").write_text("[project]\nname = 'hermes-agent'\n")
+
+    fake_banner = repo_dir / "hermes_cli" / "banner.py"
+    fake_banner.parent.mkdir(parents=True, exist_ok=True)
+    fake_banner.touch()
+
+    # Stale ~/.hermes/hermes-agent from --clone-all (no pyproject.toml)
+    stale_home = tmp_path / "home"
+    (stale_home / "hermes-agent").mkdir(parents=True)
+
+    monkeypatch.setattr(banner, "__file__", str(fake_banner))
+    monkeypatch.setenv("HERMES_HOME", str(stale_home))
+    with patch("hermes_cli.banner.check_via_pypi") as mock_pypi:
+        result = banner.check_for_updates()
+    assert result == 0
+    mock_pypi.assert_not_called()
 
 
 def test_check_for_updates_fallback_to_project_root(tmp_path, monkeypatch):
