@@ -390,6 +390,8 @@ export interface ServicesStatusResponse {
   available?: boolean;
   error?: string;
   services: Record<string, boolean>;
+  deploy_profile?: "local" | "cloud";
+  service_order?: string[];
 }
 
 export interface ServicesActionResponse {

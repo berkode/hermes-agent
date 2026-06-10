@@ -7,5 +7,13 @@ subcommands such as `gateway`, `cron`, and `doctor`.
 """
 
 if __name__ == "__main__":
+    try:
+        import hermes_bootstrap
+
+        hermes_bootstrap.maybe_reexec_with_project_venv_python(__file__)
+    except ModuleNotFoundError:
+        pass
+
     from hermes_cli.main import main
+
     main()

@@ -312,3 +312,76 @@ class TestEntryPointsImportBootstrap:
             f"configured before anything else initializes.  Move the "
             f"'import hermes_bootstrap' line to be the first import."
         )
+
+
+class TestProjectVenvReexec:
+    def test_reexecs_with_project_venv_python(self, tmp_path, monkeypatch):
+        hb = _fresh_import()
+        project_root = tmp_path / "repo"
+        project_root.mkdir()
+        venv_python = project_root / "venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("#!/bin/sh\n")
+        entry_script = project_root / "hermes"
+        entry_script.write_text("#!/usr/bin/env python3\n")
+
+        monkeypatch.setattr(hb, "_PROJECT_ROOT", project_root)
+        monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+        monkeypatch.setattr(sys, "argv", [str(entry_script), "doctor"])
+        monkeypatch.delenv("HERMES_VENV_REEXEC", raising=False)
+
+        exec_calls: list[tuple[str, list[str]]] = []
+
+        def fake_execv(path, argv):
+            exec_calls.append((path, argv))
+            raise SystemExit(0)
+
+        monkeypatch.setattr(os, "execv", fake_execv)
+
+        with pytest.raises(SystemExit):
+            hb.maybe_reexec_with_project_venv_python(str(entry_script))
+
+        assert exec_calls == [
+            (
+                str(venv_python.resolve()),
+                [
+                    str(venv_python.resolve()),
+                    str(entry_script.resolve()),
+                    "doctor",
+                ],
+            )
+        ]
+        assert os.environ["HERMES_VENV_REEXEC"] == "1"
+
+    def test_skips_when_already_in_project_venv(self, tmp_path, monkeypatch):
+        hb = _fresh_import()
+        project_root = tmp_path / "repo"
+        venv_python = project_root / "venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("#!/bin/sh\n")
+
+        monkeypatch.setattr(hb, "_PROJECT_ROOT", project_root)
+        monkeypatch.setattr(sys, "executable", str(venv_python.resolve()))
+
+        exec_calls: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(os, "execv", lambda path, argv: exec_calls.append((path, argv)))
+
+        hb.maybe_reexec_with_project_venv_python(str(project_root / "hermes"))
+        assert exec_calls == []
+
+    def test_skips_when_guard_env_set(self, tmp_path, monkeypatch):
+        hb = _fresh_import()
+        project_root = tmp_path / "repo"
+        venv_python = project_root / "venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("#!/bin/sh\n")
+
+        monkeypatch.setattr(hb, "_PROJECT_ROOT", project_root)
+        monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+        monkeypatch.setenv("HERMES_VENV_REEXEC", "1")
+
+        exec_calls: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(os, "execv", lambda path, argv: exec_calls.append((path, argv)))
+
+        hb.maybe_reexec_with_project_venv_python(str(project_root / "hermes"))
+        assert exec_calls == []

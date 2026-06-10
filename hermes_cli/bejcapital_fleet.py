@@ -16,13 +16,11 @@ from typing import Any, Callable, Optional
 
 from hermes_constants import get_hermes_home
 
-# Display order in Hermes dashboard Services tab
-SERVICE_ORDER: list[str] = [
+_LOCAL_INFRA: list[str] = ["nginx", "ollama", "ngrok"]
+_CLOUD_INFRA: list[str] = ["cloudflared", "ollama"]
+_CORE_SERVICES: list[str] = [
     "hermes-dashboard",
     "hermes-gateway",
-    "nginx",
-    "ollama",
-    "ngrok",
     "agency",
     "pimono",
     "pimono-proxy",
@@ -32,12 +30,41 @@ SERVICE_ORDER: list[str] = [
     "predictx",
 ]
 
-INFRA_SERVICES = frozenset({"nginx", "ollama", "ngrok"})
+INFRA_SERVICES = frozenset({"nginx", "ollama", "ngrok", "cloudflared"})
 AGENCY_API_SERVICES = frozenset({"agency"})
 PLATFORM_SERVICES = frozenset({"bejmind", "bejtrader", "nautilus", "predictx"})
 HERMES_SERVICES = frozenset({"hermes-dashboard", "hermes-gateway", "pimono", "pimono-proxy"})
 
-KNOWN_SERVICES = frozenset(SERVICE_ORDER)
+def deploy_profile() -> str:
+    """local = Mac (nginx + ngrok). cloud = Oracle/Linux (cloudflared → agency :8088)."""
+    raw = (
+        os.environ.get("BEJCAPITAL_DEPLOY_PROFILE")
+        or os.environ.get("DEPLOY_PROFILE")
+        or ""
+    ).strip().lower()
+    if raw == "cloud":
+        return "cloud"
+    if raw == "local":
+        return "local"
+    if sys.platform == "linux":
+        return "cloud"
+    return "local"
+
+
+def service_order() -> list[str]:
+    infra = _CLOUD_INFRA if deploy_profile() == "cloud" else _LOCAL_INFRA
+    return [
+        "hermes-dashboard",
+        "hermes-gateway",
+        *infra,
+        *[s for s in _CORE_SERVICES if s not in ("hermes-dashboard", "hermes-gateway")],
+    ]
+
+
+# Back-compat for imports; prefer service_order() at runtime.
+SERVICE_ORDER: list[str] = service_order()
+
+KNOWN_SERVICES = frozenset(service_order())
 
 
 def bejcapital_root() -> Path:
@@ -265,6 +292,19 @@ def status_one(name: str) -> bool:
         return False
     if name == "agency":
         return _health(agency_health_url())
+    if name == "cloudflared":
+        if _pid_alive(run_dir() / "cloudflared-webhook.pid"):
+            return True
+        try:
+            proc = subprocess.run(
+                ["pgrep", "-f", "cloudflared tunnel --url"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            return proc.returncode == 0 and bool((proc.stdout or "").strip())
+        except (subprocess.TimeoutExpired, OSError):
+            return False
     if name in INFRA_SERVICES:
         code, out = _infra_mgr("check", name)
         if code != 0:
@@ -352,6 +392,15 @@ def start_one(name: str) -> tuple[int, str]:
         if proc.returncode == 0 and status_one("agency"):
             return 0, out or f"agency API started on :{port}"
         return proc.returncode, out or f"agency failed on :{port}"
+    if name == "cloudflared":
+        script = bejcapital_root() / "app" / "scripts" / "oracle" / "start-cloudflared-webhook.sh"
+        if not script.is_file():
+            return 1, f"Missing {script}"
+        proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=120)
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if proc.returncode == 0 and status_one("cloudflared"):
+            return 0, out or "cloudflared webhook tunnel started"
+        return proc.returncode or 1, out or "cloudflared failed"
     if name == "nginx":
         code, msg = _infra_mgr("start", name)
         if code == 0:
@@ -412,6 +461,20 @@ def stop_one(name: str) -> tuple[int, str]:
         if hermes.is_file():
             subprocess.run([str(hermes), "gateway", "stop"], capture_output=True, timeout=30)
         return 0, "hermes-gateway stopped"
+    if name == "cloudflared":
+        pid_file = run_dir() / "cloudflared-webhook.pid"
+        if _pid_alive(pid_file):
+            try:
+                os.kill(int(pid_file.read_text().strip()), 15)
+            except (ValueError, OSError):
+                pass
+        pid_file.unlink(missing_ok=True)
+        subprocess.run(
+            ["pkill", "-TERM", "-f", "cloudflared tunnel --url"],
+            capture_output=True,
+            timeout=10,
+        )
+        return 0, "cloudflared webhook tunnel stopped"
     if name == "agency":
         code, out = _run_in_bejcapital(["stop", "agency"])
         return code, out or "agency stopped"
@@ -440,15 +503,22 @@ def status_json() -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     services: dict[str, bool] = {}
-    with ThreadPoolExecutor(max_workers=min(8, len(SERVICE_ORDER))) as pool:
-        futures = {pool.submit(_status_one_safe, name): name for name in SERVICE_ORDER}
+    order = service_order()
+    with ThreadPoolExecutor(max_workers=min(8, len(order))) as pool:
+        futures = {pool.submit(_status_one_safe, name): name for name in order}
         for fut in as_completed(futures):
             name = futures[fut]
             try:
                 services[name] = bool(fut.result())
             except Exception:
                 services[name] = False
-    return {"services": services, "available": True, "dashboard_port": dashboard_port()}
+    return {
+        "services": services,
+        "available": True,
+        "dashboard_port": dashboard_port(),
+        "deploy_profile": deploy_profile(),
+        "service_order": order,
+    }
 
 
 def start_llm() -> tuple[int, str]:
@@ -457,19 +527,32 @@ def start_llm() -> tuple[int, str]:
 
 def start_all() -> tuple[int, str]:
     messages: list[str] = []
-    order = [
-        "nginx",
-        "ollama",
-        "agency",
-        "pimono",
-        "bejmind",
-        "bejtrader",
-        "nautilus",
-        "predictx",
-        "hermes-dashboard",
-        "hermes-gateway",
-        "ngrok",
-    ]
+    if deploy_profile() == "cloud":
+        order = [
+            "ollama",
+            "agency",
+            "pimono",
+            "bejmind",
+            "nautilus",
+            "predictx",
+            "hermes-dashboard",
+            "hermes-gateway",
+            "cloudflared",
+        ]
+    else:
+        order = [
+            "nginx",
+            "ollama",
+            "agency",
+            "pimono",
+            "bejmind",
+            "bejtrader",
+            "nautilus",
+            "predictx",
+            "hermes-dashboard",
+            "hermes-gateway",
+            "ngrok",
+        ]
     code = 0
     for name in order:
         c, msg = start_one(name)
@@ -482,7 +565,7 @@ def start_all() -> tuple[int, str]:
 
 def stop_all() -> tuple[int, str]:
     messages: list[str] = []
-    order = list(reversed(SERVICE_ORDER))
+    order = list(reversed(service_order()))
     code = 0
     for name in order:
         c, msg = stop_one(name)
@@ -499,7 +582,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     svc = args[1] if len(args) > 1 else ""
 
     if cmd == "status":
-        for name in SERVICE_ORDER:
+        for name in service_order():
             state = "up" if status_one(name) else "down"
             print(f"{name}: {state}")
         return 0

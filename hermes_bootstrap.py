@@ -51,9 +51,11 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 _IS_WINDOWS = sys.platform == "win32"
 _bootstrap_applied = False
+_PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def apply_windows_utf8_bootstrap() -> bool:
@@ -120,6 +122,45 @@ def apply_windows_utf8_bootstrap() -> bool:
 
     _bootstrap_applied = True
     return True
+
+
+def _project_venv_python() -> Path | None:
+    """Return the project venv Python executable when it exists."""
+    for venv_name in ("venv", ".venv"):
+        venv_dir = _PROJECT_ROOT / venv_name
+        if not venv_dir.is_dir():
+            continue
+        if _IS_WINDOWS:
+            candidate = venv_dir / "Scripts" / "python.exe"
+        else:
+            candidate = venv_dir / "bin" / "python"
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def maybe_reexec_with_project_venv_python(entry_script: str | None = None) -> None:
+    """Re-exec via the project venv when ``./hermes`` is run with system Python.
+
+    The repo-root launcher uses ``#!/usr/bin/env python3``, which often
+    resolves to distro Python on Linux VMs even though dependencies are
+    installed in ``venv/``.  Re-exec before importing ``hermes_cli`` so
+    modules like ``python-dotenv`` resolve from the venv.
+    """
+    if os.environ.get("HERMES_VENV_REEXEC"):
+        return
+
+    venv_python = _project_venv_python()
+    if venv_python is None:
+        return
+
+    current_python = Path(sys.executable).resolve()
+    if venv_python == current_python:
+        return
+
+    script = Path(entry_script).resolve() if entry_script else Path(sys.argv[0]).resolve()
+    os.environ["HERMES_VENV_REEXEC"] = "1"
+    os.execv(str(venv_python), [str(venv_python), str(script), *sys.argv[1:]])
 
 
 # Apply on import — entry points just need ``import hermes_bootstrap``

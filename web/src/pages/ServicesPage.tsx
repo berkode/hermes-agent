@@ -21,7 +21,11 @@ const SERVICE_META: Record<string, { title: string; desc: string }> = {
   },
   nginx: { title: "nginx", desc: ":80 → dashboard upstream (MacPorts)" },
   ollama: { title: "Ollama", desc: ":11434 — local models" },
-  ngrok: { title: "ngrok", desc: "Tunnel to nginx :80" },
+  ngrok: { title: "ngrok", desc: "Tunnel to nginx :80 (Mac)" },
+  cloudflared: {
+    title: "cloudflared",
+    desc: "Public HTTPS → agency :8088 (TradingView POST /webhook)",
+  },
   agency: { title: "Agency API", desc: ":8088 — webhooks, /api/agents, monitor (Hermes UI on :8000)" },
   pimono: { title: "Pimono", desc: "pi-ai :3099 — BejMind API keys" },
   "pimono-proxy": { title: "OpenAI proxy", desc: ":5102 — Hermes LLM endpoint" },
@@ -114,6 +118,8 @@ export default function ServicesPage() {
 
   const services = status?.services ?? {};
   const unavailable = status?.available === false;
+  const order =
+    status?.service_order?.length ? status.service_order : SERVICE_ORDER;
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6 max-w-2xl">
@@ -168,7 +174,7 @@ export default function ServicesPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {SERVICE_ORDER.map((key) => {
+          {order.map((key) => {
             const up = services[key] === true;
             const meta = SERVICE_META[key] ?? { title: key, desc: "" };
             const isBusy = busy === `start:${key}` || busy === `stop:${key}` || busy === `toggle:${key}`;
