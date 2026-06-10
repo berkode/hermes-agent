@@ -1421,6 +1421,19 @@ def _query_osc11_background() -> str | None:
             bits = len(h) * 4
             return (v * 255) // ((1 << bits) - 1) if bits else 0
         r, g, b = norm(m.group(1)), norm(m.group(2)), norm(m.group(3))
+        # Drain any trailing BEL/ST bytes so prompt_toolkit does not interpret
+        # ^G (BEL) as Ctrl+G and open $EDITOR (nano) on SSH terminals.
+        drain_deadline = time.monotonic() + 0.05
+        while time.monotonic() < drain_deadline:
+            rlist, _, _ = select.select([fd], [], [], drain_deadline - time.monotonic())
+            if not rlist:
+                break
+            try:
+                extra = os.read(fd, 64)
+            except OSError:
+                break
+            if not extra:
+                break
         return f"#{r:02X}{g:02X}{b:02X}"
     finally:
         try:
@@ -12273,10 +12286,19 @@ class HermesCLI:
             lambda: not self._clarify_state and not self._approval_state and not self._sudo_state and not self._secret_state
         )
 
-        @kb.add('c-g', filter=_editor_filter)
         @kb.add('escape', 'g', filter=_editor_filter)
         def handle_open_in_editor(event):
-            """Ctrl+G (or Alt+G in VSCode/Cursor) opens the current draft in an external editor."""
+            """Alt+G (escape then g) opens the current draft in an external editor.
+
+            Bare Ctrl+G is intentionally not bound: OSC 11 background probes from
+            the terminal inject BEL (^G) which prompt_toolkit treats as Ctrl+G,
+            spuriously launching nano on SSH sessions.
+            """
+            cli_ref._open_external_editor(event.current_buffer)
+
+        @kb.add('c-x', 'c-e', filter=_editor_filter)
+        def handle_open_in_editor_emacs(event):
+            """Emacs-style Ctrl+X Ctrl+E external editor binding."""
             cli_ref._open_external_editor(event.current_buffer)
 
         @kb.add('tab', eager=True)

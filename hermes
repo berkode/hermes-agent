@@ -6,6 +6,8 @@ This wrapper should behave like the installed `hermes` command, including
 subcommands such as `gateway`, `cron`, and `doctor`.
 """
 
+import sys
+
 if __name__ == "__main__":
     try:
         import hermes_bootstrap
@@ -14,6 +16,20 @@ if __name__ == "__main__":
     except ModuleNotFoundError:
         pass
 
-    from hermes_cli.main import main
+    try:
+        from hermes_cli.main import main
+    except ModuleNotFoundError as exc:
+        print(
+            "Hermes dependencies are not installed in this Python environment.",
+            file=sys.stderr,
+        )
+        print(file=sys.stderr)
+        print("From the repo root, run:", file=sys.stderr)
+        print('  export PATH="$HOME/.local/bin:$PATH"', file=sys.stderr)
+        print('  export UV_PROJECT_ENVIRONMENT="$PWD/venv"', file=sys.stderr)
+        print("  ./setup-hermes.sh", file=sys.stderr)
+        print(file=sys.stderr)
+        print(f"Missing module: {exc.name}", file=sys.stderr)
+        sys.exit(1)
 
     main()

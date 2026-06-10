@@ -385,3 +385,18 @@ class TestProjectVenvReexec:
 
         hb.maybe_reexec_with_project_venv_python(str(project_root / "hermes"))
         assert exec_calls == []
+
+    def test_prefers_active_project_venv(self, tmp_path, monkeypatch):
+        hb = _fresh_import()
+        project_root = tmp_path / "repo"
+        dot_venv_python = project_root / ".venv" / "bin" / "python"
+        dot_venv_python.parent.mkdir(parents=True)
+        dot_venv_python.write_text("#!/bin/sh\n")
+        stale_venv_python = project_root / "venv" / "bin" / "python"
+        stale_venv_python.parent.mkdir(parents=True)
+        stale_venv_python.write_text("#!/bin/sh\n")
+
+        monkeypatch.setattr(hb, "_PROJECT_ROOT", project_root)
+        monkeypatch.setenv("VIRTUAL_ENV", str(project_root / ".venv"))
+
+        assert hb._project_venv_python() == dot_venv_python.resolve()

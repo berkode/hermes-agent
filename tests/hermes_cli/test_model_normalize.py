@@ -180,6 +180,18 @@ class TestIssue6211NativeProviderPrefixNormalization:
         assert normalize_model_for_provider(model, target_provider) == expected
 
 
+class TestCustomEndpointModelRoutePrefixes:
+    """Pimono / Ollama OpenAI proxies need ollama/ and openrouter/ slugs intact."""
+
+    @pytest.mark.parametrize("model", [
+        "ollama/gemma3:12b",
+        "openrouter/owl-alpha",
+        "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+    ])
+    def test_custom_provider_preserves_route_prefix(self, model):
+        assert normalize_model_for_provider(model, "custom") == model
+
+
 # ── detect_vendor ──────────────────────────────────────────────────────
 
 class TestDetectVendor:

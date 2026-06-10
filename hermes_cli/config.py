@@ -201,6 +201,16 @@ def get_managed_update_command() -> Optional[str]:
     return None
 
 
+def is_hermes_source_tree(project_root: Optional[Path] = None) -> bool:
+    """Return True when *project_root* looks like a Hermes source checkout."""
+    if project_root is None:
+        project_root = Path(__file__).parent.parent.resolve()
+    return (
+        (project_root / "pyproject.toml").is_file()
+        and (project_root / "hermes_cli").is_dir()
+    )
+
+
 def detect_install_method(project_root: Optional[Path] = None) -> str:
     """Detect how Hermes was installed: 'docker', 'nixos', 'homebrew', 'git', or 'pip'.
 
@@ -226,6 +236,8 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
         return "docker"
     if project_root is None:
         project_root = Path(__file__).parent.parent.resolve()
+    if is_hermes_source_tree(project_root):
+        return "git"
     if (project_root / ".git").is_dir():
         return "git"
     return "pip"

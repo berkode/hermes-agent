@@ -106,6 +106,15 @@ _MATCHING_PREFIX_STRIP_PROVIDERS: frozenset[str] = frozenset({
     "custom",
 })
 
+# OpenAI-compatible endpoints (Pimono proxy, Ollama, etc.) encode the upstream
+# backend as ``provider/modelId`` — e.g. ``ollama/gemma3:12b``.  Hermes maps
+# the bare provider alias ``ollama`` → ``custom``, which used to make
+# ``_strip_matching_provider_prefix`` strip that prefix and break Pimono.
+_CUSTOM_MODEL_ROUTE_PREFIXES: frozenset[str] = frozenset({
+    "ollama",
+    "openrouter",
+})
+
 # Providers whose APIs require lowercase model IDs.  Xiaomi's
 # ``api.xiaomimimo.com`` rejects mixed-case names like ``MiMo-V2.5-Pro``
 # that users might copy from marketing docs — it only accepts
@@ -237,8 +246,11 @@ def _strip_matching_provider_prefix(model_name: str, target_provider: str) -> st
     if not prefix.strip() or not remainder.strip():
         return model_name
 
+    raw_prefix = prefix.strip().lower()
     normalized_prefix = _normalize_provider_alias(prefix)
     normalized_target = _normalize_provider_alias(target_provider)
+    if normalized_target == "custom" and raw_prefix in _CUSTOM_MODEL_ROUTE_PREFIXES:
+        return model_name
     if normalized_prefix and normalized_prefix == normalized_target:
         return remainder.strip()
     return model_name

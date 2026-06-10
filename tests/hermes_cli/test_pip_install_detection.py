@@ -31,6 +31,15 @@ def test_managed_install_takes_precedence(tmp_path):
         assert method == "nixos"
 
 
+def test_source_tree_detected_without_git(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='hermes-agent'\n")
+    (tmp_path / "hermes_cli").mkdir()
+    with patch("hermes_cli.config.get_managed_system", return_value=None), \
+         patch("hermes_cli.config.get_hermes_home", return_value=tmp_path):
+        from hermes_cli.config import is_hermes_source_tree
+        assert is_hermes_source_tree(project_root=tmp_path) is True
+
+
 def test_recommended_update_command_pip():
     """Pip installs recommend pip install --upgrade."""
     from hermes_cli.config import recommended_update_command_for_method

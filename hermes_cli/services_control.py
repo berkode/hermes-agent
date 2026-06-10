@@ -15,7 +15,7 @@ try:
     from hermes_cli.bejcapital_fleet import KNOWN_SERVICES, SERVICE_ORDER
 except ImportError:
     KNOWN_SERVICES = frozenset(
-        {"pimono", "pimono-proxy", "bejmind", "hermes-gateway"}
+        {"pimono", "pimono-proxy", "bejmind", "hermes-gateway", "camofox-browser"}
     )
     SERVICE_ORDER = list(KNOWN_SERVICES)
 _BULK_ACTIONS = frozenset({"start-llm", "start-all", "stop-all"})

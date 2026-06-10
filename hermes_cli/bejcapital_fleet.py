@@ -16,8 +16,8 @@ from typing import Any, Callable, Optional
 
 from hermes_constants import get_hermes_home
 
-_LOCAL_INFRA: list[str] = ["nginx", "ollama", "ngrok"]
-_CLOUD_INFRA: list[str] = ["cloudflared", "ollama"]
+_LOCAL_INFRA: list[str] = ["nginx", "ollama", "ngrok", "camofox-browser"]
+_CLOUD_INFRA: list[str] = ["cloudflared", "ollama", "camofox-browser"]
 _CORE_SERVICES: list[str] = [
     "hermes-dashboard",
     "hermes-gateway",
@@ -108,6 +108,20 @@ def dashboard_port() -> int:
     except Exception:
         pass
     return 8000
+
+
+def camofox_port() -> int:
+    raw = os.environ.get("CAMOFOX_PORT", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return 9377
+
+
+def camofox_root() -> Path:
+    explicit = os.environ.get("CAMOFOX_ROOT", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    return bejcapital_root() / "external" / "camofox-browser"
 
 
 def agency_api_port() -> int:
@@ -266,6 +280,9 @@ def status_one(name: str) -> bool:
         return _health("http://127.0.0.1:3099/health")
     if name == "pimono-proxy":
         return _health("http://127.0.0.1:5102/health")
+    if name == "camofox-browser":
+        port = camofox_port()
+        return _health(f"http://127.0.0.1:{port}/health")
     if name == "bejmind":
         return _health("http://127.0.0.1:5002/ready")
     if name == "bejtrader":
@@ -349,6 +366,27 @@ def start_one(name: str) -> tuple[int, str]:
         if status_one("hermes-dashboard"):
             return 0, f"hermes-dashboard started http://127.0.0.1:{port}/ (pid {proc.pid})"
         return 1, f"hermes-dashboard failed to bind :{port} (see {log})"
+    if name == "camofox-browser":
+        script = bejcapital_root() / "app" / "scripts" / "start-camofox.sh"
+        if not script.is_file():
+            return 1, f"Missing {script}"
+        env = {
+            **os.environ,
+            "CAMOFOX_ROOT": str(camofox_root()),
+            "CAMOFOX_PORT": str(camofox_port()),
+        }
+        proc = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+            cwd=str(bejcapital_root()),
+        )
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if proc.returncode == 0 and status_one("camofox-browser"):
+            return 0, out or f"camofox-browser started on :{camofox_port()}"
+        return proc.returncode or 1, out or "camofox-browser failed to start"
     if name == "pimono" or name == "pimono-proxy":
         script = bejcapital_root() / "bejmind" / "scripts" / "start_pimono_stack.sh"
         if not script.is_file():
@@ -444,6 +482,19 @@ def stop_one(name: str) -> tuple[int, str]:
         if hermes.is_file():
             subprocess.run([str(hermes), "dashboard", "--stop"], capture_output=True, timeout=30)
         return 0, "hermes-dashboard stopped"
+    if name == "camofox-browser":
+        script = bejcapital_root() / "app" / "scripts" / "stop-camofox.sh"
+        if script.is_file():
+            proc = subprocess.run(
+                ["bash", str(script)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env={**os.environ, "CAMOFOX_ROOT": str(camofox_root())},
+            )
+            out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            return proc.returncode, out or "camofox-browser stopped"
+        return 0, "camofox-browser stop script missing"
     if name in ("pimono", "pimono-proxy"):
         script = bejcapital_root() / "bejmind" / "scripts" / "stop_pimono_stack.sh"
         if script.is_file():

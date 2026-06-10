@@ -124,18 +124,37 @@ def apply_windows_utf8_bootstrap() -> bool:
     return True
 
 
+def _python_in_venv_dir(venv_dir: Path) -> Path | None:
+    """Return the Python executable inside *venv_dir*, if present."""
+    if not venv_dir.is_dir():
+        return None
+    if _IS_WINDOWS:
+        candidate = venv_dir / "Scripts" / "python.exe"
+    else:
+        candidate = venv_dir / "bin" / "python"
+    if candidate.is_file():
+        return candidate.resolve()
+    return None
+
+
 def _project_venv_python() -> Path | None:
     """Return the project venv Python executable when it exists."""
-    for venv_name in ("venv", ".venv"):
-        venv_dir = _PROJECT_ROOT / venv_name
-        if not venv_dir.is_dir():
-            continue
-        if _IS_WINDOWS:
-            candidate = venv_dir / "Scripts" / "python.exe"
+    virtual_env = os.environ.get("VIRTUAL_ENV", "").strip()
+    if virtual_env:
+        active_dir = Path(virtual_env).resolve()
+        try:
+            active_dir.relative_to(_PROJECT_ROOT)
+        except ValueError:
+            pass
         else:
-            candidate = venv_dir / "bin" / "python"
-        if candidate.is_file():
-            return candidate.resolve()
+            active_python = _python_in_venv_dir(active_dir)
+            if active_python is not None:
+                return active_python
+
+    for venv_name in ("venv", ".venv"):
+        candidate = _python_in_venv_dir(_PROJECT_ROOT / venv_name)
+        if candidate is not None:
+            return candidate
     return None
 
 

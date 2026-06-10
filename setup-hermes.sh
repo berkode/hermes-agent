@@ -10,7 +10,7 @@
 #
 # This script:
 # 1. Detects desktop/server vs Android/Termux setup path
-# 2. Creates a Python 3.11 virtual environment
+# 2. Creates a Python 3.13 virtual environment
 # 3. Installs the appropriate dependency set for the platform
 # 4. Creates .env from template (if not exists)
 # 5. Symlinks the 'hermes' CLI command into a user-facing bin dir
@@ -33,7 +33,7 @@ cd "$SCRIPT_DIR"
 # wrong user's home directory when running under sudo -u <user>.  See #21269.
 export UV_NO_CONFIG=1
 
-PYTHON_VERSION="3.11"
+PYTHON_VERSION="3.13"
 
 is_termux() {
     [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *"com.termux/files/usr"* ]]
@@ -168,6 +168,14 @@ fi
 
 echo -e "${CYAN}→${NC} Setting up virtual environment..."
 
+# ``uv pip`` / ``uv sync`` default to .venv; Hermes standardizes on venv/.
+# A stale or broken .venv (e.g. from an interrupted install) shadows the
+# real environment and breaks manual ``uv pip install`` invocations.
+if [ -e ".venv" ]; then
+    echo -e "${CYAN}→${NC} Removing stale .venv (Hermes uses venv/)..."
+    rm -rf .venv
+fi
+
 if [ -d "venv" ]; then
     echo -e "${CYAN}→${NC} Removing old venv..."
     rm -rf venv
@@ -182,6 +190,7 @@ else
 fi
 
 export VIRTUAL_ENV="$SCRIPT_DIR/venv"
+export UV_PROJECT_ENVIRONMENT="$SCRIPT_DIR/venv"
 SETUP_PYTHON="$SCRIPT_DIR/venv/bin/python"
 
 # ============================================================================
@@ -228,9 +237,9 @@ else
     done
     _SAFE_SPEC=".[$(IFS=,; echo "${_SAFE_EXTRAS[*]}")]"
     _try_install() {
-        $UV_CMD pip install -e ".[all]" \
-            || $UV_CMD pip install -e "$_SAFE_SPEC" \
-            || $UV_CMD pip install -e "."
+        UV_PROJECT_ENVIRONMENT="$SCRIPT_DIR/venv" $UV_CMD pip install -e ".[all]" \
+            || UV_PROJECT_ENVIRONMENT="$SCRIPT_DIR/venv" $UV_CMD pip install -e "$_SAFE_SPEC" \
+            || UV_PROJECT_ENVIRONMENT="$SCRIPT_DIR/venv" $UV_CMD pip install -e "."
     }
 
     if [ -f "uv.lock" ]; then
@@ -251,7 +260,7 @@ else
         # at first use.
         # Also: stream stderr through directly so the user sees uv's
         # progress UI instead of staring at a frozen prompt.
-        if UV_PROJECT_ENVIRONMENT="$SCRIPT_DIR/venv" $UV_CMD sync --extra all --locked; then
+        if $UV_CMD sync --extra all --locked; then
             echo -e "${GREEN}✓${NC} Dependencies installed (hash-verified via uv.lock)"
         else
             echo -e "${YELLOW}⚠${NC} Lockfile sync failed (see uv output above)."

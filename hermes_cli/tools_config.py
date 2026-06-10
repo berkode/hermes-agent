@@ -482,6 +482,27 @@ TOOLSET_ENV_REQUIREMENTS = {
 # ─── Post-Setup Hooks ─────────────────────────────────────────────────────────
 
 
+def _resolve_camofox_install_dir() -> Optional[Path]:
+    """Locate Camofox — bejcapital external submodule, npm package, or CAMOFOX_ROOT."""
+    candidates: list[Path] = []
+    explicit = os.environ.get("CAMOFOX_ROOT", "").strip()
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    bej_root = os.environ.get("BEJCAPITAL_ROOT", "").strip()
+    if bej_root:
+        candidates.append(Path(bej_root).expanduser() / "external" / "camofox-browser")
+    candidates.extend(
+        (
+            PROJECT_ROOT / "external" / "camofox-browser",
+            PROJECT_ROOT / "node_modules" / "@askjo" / "camofox-browser",
+        )
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    return None
+
+
 def _pip_install(
     args: List[str],
     *,
@@ -790,9 +811,9 @@ def _run_post_setup(post_setup_key: str):
             _print_info("    Run manually: npx agent-browser install --with-deps")
 
     elif post_setup_key == "camofox":
-        camofox_dir = PROJECT_ROOT / "node_modules" / "@askjo" / "camofox-browser"
+        camofox_dir = _resolve_camofox_install_dir()
         _npm_bin = shutil.which("npm")
-        if not camofox_dir.exists() and _npm_bin:
+        if camofox_dir is None and _npm_bin:
             _print_info("    Installing Camofox browser package...")
             _print_info("    First run downloads the Camoufox engine (~300MB) — this can take several minutes.")
             import subprocess
@@ -819,10 +840,13 @@ def _run_post_setup(post_setup_key: str):
                 _print_info(
                     "    Run manually: npm install @askjo/camofox-browser"
                 )
-        if camofox_dir.exists():
-            _print_info("    Start the Camofox server:")
-            _print_info("      npx @askjo/camofox-browser")
-            _print_info("    Or use Docker: docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser")
+        if camofox_dir is not None:
+            _print_info("    Camofox source: " + str(camofox_dir))
+            _print_info("    Start (Bejcapital fleet):")
+            _print_info("      ~/.hermes/scripts/hermes-services.sh start camofox-browser")
+            _print_info("    Or from bejcapital root:")
+            _print_info("      ./app/scripts/start-camofox.sh")
+            _print_info("    Set CAMOFOX_URL=http://127.0.0.1:9377 in ~/.hermes/.env")
         elif not shutil.which("npm"):
             _print_warning("    Node.js not found. Install Camofox via Docker:")
             _print_info("      docker run -p 9377:9377 -e CAMOFOX_PORT=9377 jo-inc/camofox-browser")

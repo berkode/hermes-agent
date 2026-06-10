@@ -8340,23 +8340,232 @@ def cmd_update(args):
         _finalize_update_output(_update_io_state)
 
 
+def _git_fetch_and_pull_during_update(
+    git_cmd: list[str],
+    *,
+    assume_yes: bool,
+    gateway_mode: bool,
+    gw_input_fn,
+) -> bool:
+    """Fetch and pull origin/main during ``hermes update``.
+
+    Returns False when already up to date (caller should return).
+    Returns True when new code was pulled and post-update steps should run.
+    Exits the process on fetch/pull failures.
+    """
+    print("→ Fetching updates...")
+    fetch_result = subprocess.run(
+        git_cmd + ["fetch", "origin"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if fetch_result.returncode != 0:
+        stderr = fetch_result.stderr.strip()
+        if "Could not resolve host" in stderr or "unable to access" in stderr:
+            print("✗ Network error — cannot reach the remote repository.")
+            print(f"  {stderr.splitlines()[0]}" if stderr else "")
+        elif (
+            "Authentication failed" in stderr or "could not read Username" in stderr
+        ):
+            print(
+                "✗ Authentication failed — check your git credentials or SSH key."
+            )
+        else:
+            print("✗ Failed to fetch updates from origin.")
+            if stderr:
+                print(f"  {stderr.splitlines()[0]}")
+        sys.exit(1)
+
+    result = subprocess.run(
+        git_cmd + ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    current_branch = result.stdout.strip()
+    branch = "main"
+
+    if current_branch != "main":
+        label = (
+            "detached HEAD"
+            if current_branch == "HEAD"
+            else f"branch '{current_branch}'"
+        )
+        print(f"  ⚠ Currently on {label} — switching to main for update...")
+        auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
+        subprocess.run(
+            git_cmd + ["checkout", "main"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    else:
+        auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
+
+    prompt_for_restore = (
+        auto_stash_ref is not None
+        and not assume_yes
+        and (gateway_mode or (sys.stdin.isatty() and sys.stdout.isatty()))
+    )
+
+    result = subprocess.run(
+        git_cmd + ["rev-list", f"HEAD..origin/{branch}", "--count"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    commit_count = int(result.stdout.strip())
+
+    if commit_count == 0:
+        _invalidate_update_cache()
+        if auto_stash_ref is not None:
+            _restore_stashed_changes(
+                git_cmd,
+                PROJECT_ROOT,
+                auto_stash_ref,
+                prompt_user=prompt_for_restore,
+                input_fn=gw_input_fn,
+            )
+        if current_branch not in {"main", "HEAD"}:
+            subprocess.run(
+                git_cmd + ["checkout", current_branch],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        print("✓ Already up to date!")
+        return False
+
+    print(f"→ Found {commit_count} new commit(s)")
+
+    try:
+        from hermes_cli.backup import create_quick_snapshot
+
+        snap_id = create_quick_snapshot(label="pre-update")
+        if snap_id:
+            print(f"  ✓ Pre-update snapshot: {snap_id}")
+    except Exception as exc:
+        logger.debug("Pre-update snapshot failed: %s", exc)
+
+    print("→ Pulling updates...")
+    update_succeeded = False
+    pre_pull_sha = _capture_head_sha(git_cmd, PROJECT_ROOT)
+    try:
+        pull_result = subprocess.run(
+            git_cmd + ["pull", "--ff-only", "origin", branch],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if pull_result.returncode != 0:
+            print(
+                "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
+            )
+            reset_result = subprocess.run(
+                git_cmd + ["reset", "--hard", f"origin/{branch}"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            if reset_result.returncode != 0:
+                print(f"✗ Failed to reset to origin/{branch}.")
+                if reset_result.stderr.strip():
+                    print(f"  {reset_result.stderr.strip()}")
+                print(
+                    "  Try manually: git fetch origin && git reset --hard origin/main"
+                )
+                sys.exit(1)
+
+        syntax_ok, failing_path, syntax_error = _validate_critical_files_syntax(
+            PROJECT_ROOT
+        )
+        if not syntax_ok:
+            print()
+            print("✗ Pulled code has a syntax error in a critical file:")
+            print(f"  {failing_path}")
+            if syntax_error:
+                for line in str(syntax_error).splitlines()[:6]:
+                    print(f"    {line}")
+            if pre_pull_sha:
+                print()
+                print(f"→ Rolling back to {pre_pull_sha[:10]}...")
+                rollback_result = subprocess.run(
+                    git_cmd + ["reset", "--hard", pre_pull_sha],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                if rollback_result.returncode == 0:
+                    print("  ✓ Rollback complete — your install is unchanged.")
+                    print("  Try ``hermes update`` again later once a fix lands.")
+                else:
+                    print("  ✗ Rollback failed. Recover manually with:")
+                    print(f"    cd {PROJECT_ROOT} && git reset --hard {pre_pull_sha}")
+                    if rollback_result.stderr.strip():
+                        print(
+                            f"    ({rollback_result.stderr.strip().splitlines()[0]})"
+                        )
+            else:
+                print()
+                print("  Could not capture pre-pull SHA — recover manually with:")
+                print(
+                    f"    cd {PROJECT_ROOT} && git reflog && git reset --hard <prev-sha>"
+                )
+            sys.exit(1)
+
+        update_succeeded = True
+    finally:
+        if auto_stash_ref is not None:
+            if not update_succeeded:
+                print(
+                    f"  ℹ️  Local changes preserved in stash (ref: {auto_stash_ref})"
+                )
+                print("  Restore manually with: git stash apply")
+            else:
+                _restore_stashed_changes(
+                    git_cmd,
+                    PROJECT_ROOT,
+                    auto_stash_ref,
+                    prompt_user=prompt_for_restore,
+                    input_fn=gw_input_fn,
+                )
+
+    return True
+
+
 def _cmd_update_pip(args):
     """Update Hermes via pip (for PyPI installs)."""
     from hermes_cli import __version__
+    from hermes_cli.tools_config import _pip_install
 
     print(f"→ Current version: {__version__}")
     print("→ Checking PyPI for updates...")
 
     uv = shutil.which("uv")
-    if uv:
-        cmd = [uv, "pip", "install", "--upgrade", "hermes-agent"]
-    else:
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "hermes-agent"]
+    display_cmd = (
+        f"{uv} pip install --upgrade hermes-agent"
+        if uv
+        else f"{sys.executable} -m pip install --upgrade hermes-agent"
+    )
+    print(f"→ Running: {display_cmd}")
 
-    print(f"→ Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd)
+    result = _pip_install(["--upgrade", "hermes-agent"], capture_output=False)
     if result.returncode != 0:
         print("✗ Update failed")
+        err = (result.stderr or "").strip()
+        if err:
+            for line in err.splitlines()[-3:]:
+                print(f"  {line}")
+        if not uv:
+            print(
+                "  Install uv for reliable updates: "
+                "curl -LsSf https://astral.sh/uv/install.sh | sh"
+            )
         sys.exit(1)
 
     print("✓ Update complete! Restart hermes to use the new version.")
@@ -8397,20 +8606,25 @@ def _cmd_update_impl(args, gateway_mode: bool):
     use_zip_update = False
     git_dir = PROJECT_ROOT / ".git"
 
+    skip_git_pull = False
     if not git_dir.exists():
         if sys.platform == "win32":
             use_zip_update = True
         else:
-            from hermes_cli.config import detect_install_method
-            method = detect_install_method(PROJECT_ROOT)
-            if method == "pip":
-                _cmd_update_pip(args)
-                return
-            print("✗ Not a git repository. Please reinstall:")
-            print(
-                "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-            )
-            sys.exit(1)
+            from hermes_cli.config import detect_install_method, is_hermes_source_tree
+
+            if is_hermes_source_tree(PROJECT_ROOT):
+                skip_git_pull = True
+            else:
+                method = detect_install_method(PROJECT_ROOT)
+                if method == "pip":
+                    _cmd_update_pip(args)
+                    return
+                print("✗ Not a git repository. Please reinstall:")
+                print(
+                    "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
+                )
+                sys.exit(1)
 
     # On Windows, git can fail with "unable to write loose object file: Invalid argument"
     # due to filesystem atomicity issues. Set the recommended workaround.
@@ -8448,218 +8662,21 @@ def _cmd_update_impl(args, gateway_mode: bool):
         _update_via_zip(args)
         return
 
-    # Fetch and pull
+    branch = "main"
+
+    # Fetch and pull (skipped for source trees deployed without .git)
     try:
-
-        print("→ Fetching updates...")
-        fetch_result = subprocess.run(
-            git_cmd + ["fetch", "origin"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if fetch_result.returncode != 0:
-            stderr = fetch_result.stderr.strip()
-            if "Could not resolve host" in stderr or "unable to access" in stderr:
-                print("✗ Network error — cannot reach the remote repository.")
-                print(f"  {stderr.splitlines()[0]}" if stderr else "")
-            elif (
-                "Authentication failed" in stderr or "could not read Username" in stderr
-            ):
-                print(
-                    "✗ Authentication failed — check your git credentials or SSH key."
-                )
-            else:
-                print(f"✗ Failed to fetch updates from origin.")
-                if stderr:
-                    print(f"  {stderr.splitlines()[0]}")
-            sys.exit(1)
-
-        # Get current branch (returns literal "HEAD" when detached)
-        result = subprocess.run(
-            git_cmd + ["rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        current_branch = result.stdout.strip()
-
-        # Always update against main
-        branch = "main"
-
-        # If user is on a non-main branch or detached HEAD, switch to main
-        if current_branch != "main":
-            label = (
-                "detached HEAD"
-                if current_branch == "HEAD"
-                else f"branch '{current_branch}'"
-            )
-            print(f"  ⚠ Currently on {label} — switching to main for update...")
-            # Stash before checkout so uncommitted work isn't lost
-            auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
-            subprocess.run(
-                git_cmd + ["checkout", "main"],
-                cwd=PROJECT_ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        else:
-            auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
-
-        prompt_for_restore = (
-            auto_stash_ref is not None
-            and not assume_yes
-            and (gateway_mode or (sys.stdin.isatty() and sys.stdout.isatty()))
-        )
-
-        # Check if there are updates
-        result = subprocess.run(
-            git_cmd + ["rev-list", f"HEAD..origin/{branch}", "--count"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        commit_count = int(result.stdout.strip())
-
-        if commit_count == 0:
-            _invalidate_update_cache()
-            # Restore stash and switch back to original branch if we moved
-            if auto_stash_ref is not None:
-                _restore_stashed_changes(
-                    git_cmd,
-                    PROJECT_ROOT,
-                    auto_stash_ref,
-                    prompt_user=prompt_for_restore,
-                    input_fn=gw_input_fn,
-                )
-            if current_branch not in {"main", "HEAD"}:
-                subprocess.run(
-                    git_cmd + ["checkout", current_branch],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-            print("✓ Already up to date!")
+        if skip_git_pull:
+            print("→ Source checkout (no .git) — refreshing dependencies...")
+            print("  ℹ To pull upstream code, redeploy or use a git clone.")
+            print()
+        elif not _git_fetch_and_pull_during_update(
+            git_cmd,
+            assume_yes=assume_yes,
+            gateway_mode=gateway_mode,
+            gw_input_fn=gw_input_fn,
+        ):
             return
-
-        print(f"→ Found {commit_count} new commit(s)")
-
-        # Snapshot critical state (state.db, config, pairing JSONs, etc.)
-        # before pulling so a user can recover if something goes wrong.
-        # Issue #15733 reported missing pairing data after an update; even
-        # though `git pull` can't touch $HERMES_HOME, this is cheap
-        # belt-and-suspenders insurance and gives the user something to
-        # restore from via `/snapshot list` / `/snapshot restore <id>`.
-        try:
-            from hermes_cli.backup import create_quick_snapshot
-
-            snap_id = create_quick_snapshot(label="pre-update")
-            if snap_id:
-                print(f"  ✓ Pre-update snapshot: {snap_id}")
-        except Exception as exc:
-            # Never let a snapshot failure block an update.
-            logger.debug("Pre-update snapshot failed: %s", exc)
-
-        print("→ Pulling updates...")
-        update_succeeded = False
-        # Capture the pre-pull SHA so we can auto-roll-back if the new code
-        # has a syntax error in a critical-path file (PR #28452 incident:
-        # orphan merge-conflict markers in hermes_cli/config.py bricked
-        # every user who ran ``hermes update`` for the 7 minutes between
-        # the bad commit and the fix landing).
-        pre_pull_sha = _capture_head_sha(git_cmd, PROJECT_ROOT)
-        try:
-            pull_result = subprocess.run(
-                git_cmd + ["pull", "--ff-only", "origin", branch],
-                cwd=PROJECT_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            if pull_result.returncode != 0:
-                # ff-only failed — local and remote have diverged (e.g. upstream
-                # force-pushed or rebase).  Since local changes are already
-                # stashed, reset to match the remote exactly.
-                print(
-                    "  ⚠ Fast-forward not possible (history diverged), resetting to match remote..."
-                )
-                reset_result = subprocess.run(
-                    git_cmd + ["reset", "--hard", f"origin/{branch}"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    text=True,
-                )
-                if reset_result.returncode != 0:
-                    print(f"✗ Failed to reset to origin/{branch}.")
-                    if reset_result.stderr.strip():
-                        print(f"  {reset_result.stderr.strip()}")
-                    print(
-                        "  Try manually: git fetch origin && git reset --hard origin/main"
-                    )
-                    sys.exit(1)
-
-            # Post-pull syntax guard: validate critical-path files actually
-            # parse before declaring the update successful. If a bad commit
-            # made it through CI (e.g. admin-merge bypass of a failing
-            # ruff check), this catches it on the user side and rolls back
-            # so the CLI stays bootable. The user can then retry ``hermes
-            # update`` later once a fix lands upstream.
-            syntax_ok, failing_path, syntax_error = _validate_critical_files_syntax(
-                PROJECT_ROOT
-            )
-            if not syntax_ok:
-                print()
-                print("✗ Pulled code has a syntax error in a critical file:")
-                print(f"  {failing_path}")
-                if syntax_error:
-                    # py_compile errors can be multi-line; show the first
-                    # ~6 lines so the user sees the actual SyntaxError text.
-                    for line in str(syntax_error).splitlines()[:6]:
-                        print(f"    {line}")
-                if pre_pull_sha:
-                    print()
-                    print(f"→ Rolling back to {pre_pull_sha[:10]}...")
-                    rollback_result = subprocess.run(
-                        git_cmd + ["reset", "--hard", pre_pull_sha],
-                        cwd=PROJECT_ROOT,
-                        capture_output=True,
-                        text=True,
-                    )
-                    if rollback_result.returncode == 0:
-                        print("  ✓ Rollback complete — your install is unchanged.")
-                        print("  Try ``hermes update`` again later once a fix lands.")
-                    else:
-                        print("  ✗ Rollback failed. Recover manually with:")
-                        print(f"    cd {PROJECT_ROOT} && git reset --hard {pre_pull_sha}")
-                        if rollback_result.stderr.strip():
-                            print(f"    ({rollback_result.stderr.strip().splitlines()[0]})")
-                else:
-                    print()
-                    print("  Could not capture pre-pull SHA — recover manually with:")
-                    print(f"    cd {PROJECT_ROOT} && git reflog && git reset --hard <prev-sha>")
-                sys.exit(1)
-
-            update_succeeded = True
-        finally:
-            if auto_stash_ref is not None:
-                # Don't attempt stash restore if the code update itself failed —
-                # working tree is in an unknown state.
-                if not update_succeeded:
-                    print(
-                        f"  ℹ️  Local changes preserved in stash (ref: {auto_stash_ref})"
-                    )
-                    print(f"  Restore manually with: git stash apply")
-                else:
-                    _restore_stashed_changes(
-                        git_cmd,
-                        PROJECT_ROOT,
-                        auto_stash_ref,
-                        prompt_user=prompt_for_restore,
-                        input_fn=gw_input_fn,
-                    )
 
         _invalidate_update_cache()
 
