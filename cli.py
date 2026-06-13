@@ -4624,6 +4624,18 @@ class HermesCLI:
                 "credential_pool": getattr(self, "_credential_pool", None),
             }
             effective_model = model_override or self.model
+            from agent.model_metadata import (
+                resolve_toolsets_for_model,
+                should_skip_heavy_context_for_model,
+            )
+
+            _base_url = runtime.get("base_url")
+            _ollama_light = should_skip_heavy_context_for_model(
+                effective_model, _base_url,
+            )
+            _toolsets = resolve_toolsets_for_model(
+                self.enabled_toolsets, effective_model, _base_url,
+            )
             self.agent = AIAgent(
                 model=effective_model,
                 api_key=runtime.get("api_key"),
@@ -4634,7 +4646,7 @@ class HermesCLI:
                 acp_args=runtime.get("args"),
                 credential_pool=runtime.get("credential_pool"),
                 max_iterations=self.max_turns,
-                enabled_toolsets=self.enabled_toolsets,
+                enabled_toolsets=_toolsets,
                 disabled_toolsets=self.disabled_toolsets,
                 verbose_logging=self.verbose,
                 quiet_mode=not self.verbose,
@@ -4663,8 +4675,8 @@ class HermesCLI:
                 checkpoint_max_total_size_mb=self.checkpoint_max_total_size_mb,
                 checkpoint_max_file_size_mb=self.checkpoint_max_file_size_mb,
                 pass_session_id=self.pass_session_id,
-                skip_context_files=self.ignore_rules,
-                skip_memory=self.ignore_rules,
+                skip_context_files=self.ignore_rules or _ollama_light,
+                skip_memory=self.ignore_rules or _ollama_light,
                 tool_progress_callback=self._on_tool_progress,
                 tool_start_callback=self._on_tool_start if self._inline_diffs_enabled else None,
                 tool_complete_callback=self._on_tool_complete if self._inline_diffs_enabled else None,
@@ -8380,16 +8392,29 @@ class HermesCLI:
             except Exception:
                 pass
             try:
+                from agent.model_metadata import (
+                    resolve_toolsets_for_model,
+                    should_skip_heavy_context_for_model,
+                )
+
+                _bg_runtime = turn_route["runtime"]
+                _bg_base = _bg_runtime.get("base_url")
+                _bg_ollama_light = should_skip_heavy_context_for_model(
+                    turn_route["model"], _bg_base,
+                )
+                _bg_toolsets = resolve_toolsets_for_model(
+                    self.enabled_toolsets, turn_route["model"], _bg_base,
+                )
                 bg_agent = AIAgent(
                     model=turn_route["model"],
-                    api_key=turn_route["runtime"].get("api_key"),
-                    base_url=turn_route["runtime"].get("base_url"),
-                    provider=turn_route["runtime"].get("provider"),
-                    api_mode=turn_route["runtime"].get("api_mode"),
-                    acp_command=turn_route["runtime"].get("command"),
-                    acp_args=turn_route["runtime"].get("args"),
+                    api_key=_bg_runtime.get("api_key"),
+                    base_url=_bg_runtime.get("base_url"),
+                    provider=_bg_runtime.get("provider"),
+                    api_mode=_bg_runtime.get("api_mode"),
+                    acp_command=_bg_runtime.get("command"),
+                    acp_args=_bg_runtime.get("args"),
                     max_iterations=self.max_turns,
-                    enabled_toolsets=self.enabled_toolsets,
+                    enabled_toolsets=_bg_toolsets,
                     quiet_mode=True,
                     verbose_logging=False,
                     session_id=task_id,
@@ -8406,6 +8431,8 @@ class HermesCLI:
                     provider_data_collection=self._provider_data_collection,
                     openrouter_min_coding_score=self._openrouter_min_coding_score,
                     fallback_model=self._fallback_model,
+                    skip_context_files=self.ignore_rules or _bg_ollama_light,
+                    skip_memory=self.ignore_rules or _bg_ollama_light,
                 )
                 # Silence raw spinner; route thinking through TUI widget when no foreground agent is active.
                 bg_agent._print_fn = lambda *_a, **_kw: None

@@ -3239,6 +3239,23 @@ class TestRunConversation:
         assert result["final_response"] == "Recovered after compression"
         assert result["completed"] is True
 
+    def test_length_with_complete_short_reply_skips_continuation(self, agent):
+        """Complete greetings mis-tagged as length should not burn 3 retries."""
+        self._setup_agent(agent)
+        resp = _mock_response(content="Hello.", finish_reason="length")
+        agent.client.chat.completions.create.return_value = resp
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        assert result["completed"] is True
+        assert result["api_calls"] == 1
+        assert result["final_response"] == "Hello."
+
     def test_length_finish_reason_requests_continuation(self, agent):
         """Normal truncation (partial real content) triggers continuation."""
         self._setup_agent(agent)

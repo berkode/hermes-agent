@@ -1903,6 +1903,18 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
         requested=requested_provider,
         target_model=model or None,
     )
+    from agent.model_metadata import (
+        resolve_toolsets_for_model,
+        should_skip_heavy_context_for_model,
+    )
+
+    _base_url = runtime.get("base_url")
+    _effective_model = model or ""
+    _ollama_light = should_skip_heavy_context_for_model(_effective_model, _base_url)
+    _toolsets = resolve_toolsets_for_model(
+        _load_enabled_toolsets(), _effective_model, _base_url,
+    )
+    _ignore_rules = is_truthy_value(os.environ.get("HERMES_IGNORE_RULES"))
     return AIAgent(
         model=model,
         max_iterations=_cfg_max_turns(cfg, 90),
@@ -1917,15 +1929,15 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
         verbose_logging=_load_tool_progress_mode() == "verbose",
         reasoning_config=_load_reasoning_config(),
         service_tier=_load_service_tier(),
-        enabled_toolsets=_load_enabled_toolsets(),
+        enabled_toolsets=_toolsets,
         platform="tui",
         session_id=session_id or key,
         session_db=_get_db(),
         ephemeral_system_prompt=system_prompt or None,
         checkpoints_enabled=is_truthy_value(os.environ.get("HERMES_TUI_CHECKPOINTS")),
         pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
-        skip_context_files=is_truthy_value(os.environ.get("HERMES_IGNORE_RULES")),
-        skip_memory=is_truthy_value(os.environ.get("HERMES_IGNORE_RULES")),
+        skip_context_files=_ignore_rules or _ollama_light,
+        skip_memory=_ignore_rules or _ollama_light,
         **_agent_cbs(sid),
     )
 

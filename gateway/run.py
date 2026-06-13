@@ -16280,13 +16280,26 @@ class GatewayRunner:
 
             if agent is None:
                 # Config changed or first message — create fresh agent
+                from agent.model_metadata import (
+                    resolve_toolsets_for_model,
+                    should_skip_heavy_context_for_model,
+                )
+
+                _runtime = turn_route["runtime"]
+                _base_url = _runtime.get("base_url")
+                _ollama_light = should_skip_heavy_context_for_model(
+                    turn_route["model"], _base_url,
+                )
+                _toolsets = resolve_toolsets_for_model(
+                    enabled_toolsets, turn_route["model"], _base_url,
+                )
                 agent = AIAgent(
                     model=turn_route["model"],
-                    **turn_route["runtime"],
+                    **_runtime,
                     max_iterations=max_iterations,
                     quiet_mode=True,
                     verbose_logging=False,
-                    enabled_toolsets=enabled_toolsets,
+                    enabled_toolsets=_toolsets,
                     disabled_toolsets=disabled_toolsets,
                     ephemeral_system_prompt=combined_ephemeral or None,
                     prefill_messages=self._prefill_messages or None,
@@ -16310,6 +16323,8 @@ class GatewayRunner:
                     gateway_session_key=session_key,
                     session_db=self._session_db,
                     fallback_model=self._fallback_model,
+                    skip_context_files=_ollama_light,
+                    skip_memory=_ollama_light,
                 )
                 if _cache_lock and _cache is not None:
                     with _cache_lock:

@@ -419,13 +419,14 @@ def build_api_kwargs(agent, api_messages: list) -> dict:
         # registered providers with profiles were bypassing the strip.
         api_messages = agent._prepare_messages_for_non_vision_model(api_messages)
 
+        _request_max_tokens = agent._resolve_request_max_tokens()
         return _ct.build_kwargs(
             model=agent.model,
             messages=api_messages,
             tools=tools_for_api,
             base_url=agent.base_url,
             timeout=agent._resolved_api_call_timeout(),
-            max_tokens=agent.max_tokens,
+            max_tokens=_request_max_tokens,
             ephemeral_max_output_tokens=_ephemeral_out,
             max_tokens_param_fn=agent._max_tokens_param,
             reasoning_config=agent.reasoning_config,
@@ -451,13 +452,14 @@ def build_api_kwargs(agent, api_messages: list) -> dict:
     # Strip image parts for non-vision models (no-op when vision-capable).
     _msgs_for_chat = agent._prepare_messages_for_non_vision_model(api_messages)
 
+    _request_max_tokens = agent._resolve_request_max_tokens()
     return _ct.build_kwargs(
         model=agent.model,
         messages=_msgs_for_chat,
         tools=tools_for_api,
         base_url=agent.base_url,
         timeout=agent._resolved_api_call_timeout(),
-        max_tokens=agent.max_tokens,
+        max_tokens=_request_max_tokens,
         ephemeral_max_output_tokens=_ephemeral_out,
         max_tokens_param_fn=agent._max_tokens_param,
         reasoning_config=agent.reasoning_config,

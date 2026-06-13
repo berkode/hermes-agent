@@ -1039,6 +1039,30 @@ class AIAgent:
             return True
         return bool(self.base_url and is_local_endpoint(self.base_url))
 
+    def _resolve_request_max_tokens(self) -> int | None:
+        """Output-token cap for the active model route (Ollama vs cloud)."""
+        from agent.model_metadata import resolve_request_max_tokens
+
+        return resolve_request_max_tokens(
+            model=self.model,
+            base_url=self.base_url,
+            max_tokens=self.max_tokens,
+            max_tokens_ollama=getattr(self, "max_tokens_ollama", None),
+        )
+
+    def _should_accept_length_as_complete(
+        self,
+        content: str | None,
+        has_tool_calls: bool,
+    ) -> bool:
+        """Skip length-continuation when the visible reply already looks finished."""
+        if has_tool_calls:
+            return False
+        visible = self._strip_think_blocks(content or "").strip()
+        if not visible:
+            return False
+        return self._has_natural_response_ending(visible)
+
     def _should_treat_stop_as_truncated(
         self,
         finish_reason: str,

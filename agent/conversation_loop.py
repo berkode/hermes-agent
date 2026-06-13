@@ -1347,8 +1347,19 @@ def run_conversation(
                         finish_reason = "length"
 
                 if finish_reason == "length":
-                    agent._vprint(f"{agent.log_prefix}⚠️  Response truncated (finish_reason='length') - model hit max output tokens", force=True)
+                    _early_trunc = agent._get_transport().normalize_response(response)
+                    _early_content = getattr(_early_trunc, "content", None)
+                    _early_tool_calls = bool(getattr(_early_trunc, "tool_calls", None))
+                    if agent._should_accept_length_as_complete(
+                        _early_content,
+                        _early_tool_calls,
+                    ):
+                        finish_reason = "stop"
+                        assistant_message = _early_trunc
+                    else:
+                        agent._vprint(f"{agent.log_prefix}⚠️  Response truncated (finish_reason='length') - model hit max output tokens", force=True)
 
+                if finish_reason == "length":
                     # Normalize the truncated response to a single OpenAI-style
                     # message shape so text-continuation and tool-call retry
                     # work uniformly across chat_completions, bedrock_converse,
@@ -2909,7 +2920,7 @@ def run_conversation(
             # Progressively boost the output token budget on each retry.
             # Retry 1 → 2× base, retry 2 → 3× base, capped at 32 768.
             # Applies to all providers via _ephemeral_max_output_tokens.
-            _boost_base = agent.max_tokens if agent.max_tokens else 4096
+            _boost_base = agent._resolve_request_max_tokens() or 4096
             _boost = _boost_base * (length_continue_retries + 1)
             agent._ephemeral_max_output_tokens = min(_boost, 32768)
             continue
@@ -2931,7 +2942,13 @@ def run_conversation(
             normalized = _transport.normalize_response(response, **_normalize_kwargs)
             assistant_message = normalized
             finish_reason = normalized.finish_reason
-            
+            if finish_reason == "length" and agent._should_accept_length_as_complete(
+                assistant_message.content,
+                bool(getattr(assistant_message, "tool_calls", None)),
+            ):
+                finish_reason = "stop"
+                normalized.finish_reason = "stop"
+
             # Normalize content to string — some OpenAI-compatible servers
             # (llama-server, etc.) return content as a dict or list instead
             # of a plain string, which crashes downstream .strip() calls.

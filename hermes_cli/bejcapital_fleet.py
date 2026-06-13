@@ -16,7 +16,8 @@ from typing import Any, Callable, Optional
 
 from hermes_constants import get_hermes_home
 
-_LOCAL_INFRA: list[str] = ["nginx", "ollama", "ngrok", "camofox-browser"]
+# Ollama runs on Oracle VM only — Mac reaches it via oracle-llm-tunnel.sh (see start_one pimono).
+_LOCAL_INFRA: list[str] = ["nginx", "ngrok", "camofox-browser"]
 _CLOUD_INFRA: list[str] = ["cloudflared", "ollama", "camofox-browser"]
 _CORE_SERVICES: list[str] = [
     "hermes-dashboard",
@@ -34,6 +35,18 @@ INFRA_SERVICES = frozenset({"nginx", "ollama", "ngrok", "cloudflared"})
 AGENCY_API_SERVICES = frozenset({"agency"})
 PLATFORM_SERVICES = frozenset({"bejmind", "bejtrader", "nautilus", "predictx"})
 HERMES_SERVICES = frozenset({"hermes-dashboard", "hermes-gateway", "pimono", "pimono-proxy"})
+
+def oracle_llm_on_mac() -> bool:
+    """Mac Hermes LLM (Pimono/Ollama/gemma) is served from Oracle VM via SSH tunnel."""
+    if deploy_profile() == "cloud":
+        return False
+    raw = (
+        os.environ.get("BEJCAPITAL_ORACLE_LLM")
+        or os.environ.get("HERMES_ORACLE_LLM")
+        or "1"
+    ).strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
 
 def deploy_profile() -> str:
     """local = Mac (nginx + ngrok). cloud = Oracle/Linux (cloudflared → agency :8088)."""
@@ -276,9 +289,11 @@ def status_one(name: str) -> bool:
             return True
         # Socket probe only — HTTP /api/status from the dashboard worker deadlocks.
         return _port_open("127.0.0.1", port)
-    if name == "pimono":
-        return _health("http://127.0.0.1:3099/health")
-    if name == "pimono-proxy":
+    if name in ("pimono", "pimono-proxy"):
+        if oracle_llm_on_mac():
+            return _health("http://127.0.0.1:5102/health")
+        if name == "pimono":
+            return _health("http://127.0.0.1:3099/health")
         return _health("http://127.0.0.1:5102/health")
     if name == "camofox-browser":
         port = camofox_port()
@@ -388,6 +403,26 @@ def start_one(name: str) -> tuple[int, str]:
             return 0, out or f"camofox-browser started on :{camofox_port()}"
         return proc.returncode or 1, out or "camofox-browser failed to start"
     if name == "pimono" or name == "pimono-proxy":
+        if oracle_llm_on_mac():
+            script = (
+                bejcapital_root()
+                / "app"
+                / "scripts"
+                / "oracle"
+                / "oracle-llm-tunnel.sh"
+            )
+            if not script.is_file():
+                return 1, f"Missing {script}"
+            proc = subprocess.run(
+                ["bash", str(script), "start"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            if proc.returncode == 0 and status_one("pimono-proxy"):
+                return 0, out or "oracle LLM tunnel up (VM Pimono → Mac :5102)"
+            return proc.returncode or 1, out or "oracle LLM tunnel failed"
         script = bejcapital_root() / "bejmind" / "scripts" / "start_pimono_stack.sh"
         if not script.is_file():
             return 1, f"Missing {script}"
@@ -496,6 +531,17 @@ def stop_one(name: str) -> tuple[int, str]:
             return proc.returncode, out or "camofox-browser stopped"
         return 0, "camofox-browser stop script missing"
     if name in ("pimono", "pimono-proxy"):
+        if oracle_llm_on_mac():
+            script = (
+                bejcapital_root()
+                / "app"
+                / "scripts"
+                / "oracle"
+                / "oracle-llm-tunnel.sh"
+            )
+            if script.is_file():
+                subprocess.run(["bash", str(script), "stop"], capture_output=True, timeout=60)
+            return 0, "oracle LLM tunnel stopped"
         script = bejcapital_root() / "bejmind" / "scripts" / "stop_pimono_stack.sh"
         if script.is_file():
             subprocess.run(["bash", str(script)], capture_output=True, timeout=120)
@@ -593,7 +639,6 @@ def start_all() -> tuple[int, str]:
     else:
         order = [
             "nginx",
-            "ollama",
             "agency",
             "pimono",
             "bejmind",

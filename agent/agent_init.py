@@ -1177,6 +1177,25 @@ def init_agent(
                 )
     agent._session_init_model_config["max_tokens"] = agent.max_tokens
 
+    # Per-route output cap for Ollama/local models (see resolve_request_max_tokens).
+    agent.max_tokens_ollama = None
+    if isinstance(_model_cfg, dict):
+        _config_ollama_max = _model_cfg.get("max_tokens_ollama")
+        if _config_ollama_max is not None:
+            try:
+                if isinstance(_config_ollama_max, bool):
+                    raise ValueError
+                _parsed_ollama_max = int(_config_ollama_max)
+                if _parsed_ollama_max <= 0:
+                    raise ValueError
+                agent.max_tokens_ollama = _parsed_ollama_max
+            except (TypeError, ValueError):
+                _ra().logger.warning(
+                    "Invalid model.max_tokens_ollama in config.yaml: %r — "
+                    "must be a positive integer (e.g. 2048). Ignoring.",
+                    _config_ollama_max,
+                )
+
     # Read explicit context_length override from model config
     if isinstance(_model_cfg, dict):
         _config_context_length = _model_cfg.get("context_length")

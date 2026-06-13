@@ -411,6 +411,87 @@ def _is_known_provider_base_url(base_url: str) -> bool:
     return _infer_provider_from_url(base_url) is not None
 
 
+def is_ollama_routed_model(model: str, base_url: str | None = None) -> bool:
+    """Return True when the active model should use Ollama/local output limits.
+
+    Covers explicit ``ollama/…`` Pimono routes, bare Ollama tag ids like
+    ``gemma3:12b``, and direct ``:11434`` endpoints.
+    """
+    raw = (model or "").strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    if lowered.startswith("ollama/") or lowered.startswith("ollama:"):
+        return True
+    if base_url:
+        normalized = _normalize_base_url(base_url)
+        if normalized and (":11434" in normalized or "/ollama" in normalized.lower()):
+            if not lowered.startswith("openrouter/"):
+                return True
+    # Bare tag form (name:tag) without a vendor slash — Pimono maps these to Ollama.
+    if "/" not in raw and ":" in raw and not lowered.startswith("openrouter"):
+        first = raw.split(":", 1)[0].lower()
+        if first not in _PROVIDER_PREFIXES:
+            return True
+    return False
+
+
+def should_skip_heavy_context_for_model(model: str, base_url: str | None = None) -> bool:
+    """Skip AGENTS.md / memory prefetch for Ollama routes on slow local hosts."""
+    return is_ollama_routed_model(model, base_url)
+
+
+# Small bundle for ARM Ollama — full Hermes tool schemas can exceed 100k tokens.
+_OLLAMA_LIGHT_TOOLSETS: tuple[str, ...] = (
+    "safe", "file", "terminal", "todo", "search",
+)
+
+
+def resolve_toolsets_for_model(
+    enabled_toolsets: list[str] | None,
+    model: str,
+    base_url: str | None = None,
+) -> list[str] | None:
+    """Trim toolsets for Ollama/local models unless caller opts into full schemas."""
+    if os.environ.get("HERMES_OLLAMA_FULL_TOOLSETS", "").strip().lower() in {
+        "1", "true", "yes",
+    }:
+        return enabled_toolsets
+    if not is_ollama_routed_model(model, base_url):
+        return enabled_toolsets
+    light = set(_OLLAMA_LIGHT_TOOLSETS)
+    if not enabled_toolsets:
+        return list(_OLLAMA_LIGHT_TOOLSETS)
+    if any(name in {"all", "*"} for name in enabled_toolsets):
+        return list(_OLLAMA_LIGHT_TOOLSETS)
+    trimmed = [name for name in enabled_toolsets if name in light]
+    return trimmed or list(_OLLAMA_LIGHT_TOOLSETS)
+
+
+def resolve_request_max_tokens(
+    *,
+    model: str,
+    base_url: str | None,
+    max_tokens: int | None,
+    max_tokens_ollama: int | None = None,
+    ollama_floor: int = 2048,
+) -> int | None:
+    """Pick the output-token cap for the current request.
+
+  When ``model.max_tokens`` is tuned for a cloud/Pimono route (e.g. 300 for
+  openrouter/owl-alpha) but the active model is ``ollama/gemma3:12b``, use
+  ``max_tokens_ollama`` or ``ollama_floor`` instead so local Gemma is not
+  truncated mid-greeting.
+    """
+    if not is_ollama_routed_model(model, base_url):
+        return max_tokens
+    if max_tokens_ollama is not None and max_tokens_ollama > 0:
+        return max_tokens_ollama
+    if max_tokens is not None and max_tokens < ollama_floor:
+        return ollama_floor
+    return max_tokens
+
+
 def is_local_endpoint(base_url: str) -> bool:
     """Return True if base_url points to a local machine.
 
