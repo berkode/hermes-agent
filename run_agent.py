@@ -1017,6 +1017,8 @@ class AIAgent:
         stripped = content.rstrip()
         if not stripped:
             return False
+        if stripped.endswith("..."):
+            return False
         if stripped.endswith("```"):
             return True
         if stripped.endswith('^'):
@@ -1061,7 +1063,17 @@ class AIAgent:
         visible = self._strip_think_blocks(content or "").strip()
         if not visible:
             return False
-        return self._has_natural_response_ending(visible)
+        if self._has_natural_response_ending(visible):
+            return True
+        # Ollama/Pimono often mis-report finish_reason=length on complete short
+        # replies (especially greetings). Accepting them avoids 2–3 extra API
+        # rounds that add 15–30s on ARM local models.
+        from agent.model_metadata import is_ollama_routed_model
+
+        if is_ollama_routed_model(self.model, self.base_url):
+            if len(visible) >= 12 and not visible.rstrip().endswith("..."):
+                return True
+        return False
 
     def _should_treat_stop_as_truncated(
         self,
