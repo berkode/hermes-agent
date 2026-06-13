@@ -468,6 +468,48 @@ def resolve_toolsets_for_model(
     return trimmed or list(_OLLAMA_LIGHT_TOOLSETS)
 
 
+def trim_conversation_history_for_local_model(
+    history: list[dict],
+    model: str,
+    base_url: str | None,
+    *,
+    max_messages: int | None = None,
+    max_estimated_tokens: int | None = None,
+) -> list[dict]:
+    """Tail-trim history for Ollama/local models so resumed sessions stay prompt-sized.
+
+    Full session transcripts easily exceed ARM Ollama's 16K runtime window while
+    Hermes' planner context_length may still read 128K–256K. Trimming here is
+    cheap (no auxiliary LLM) and runs before preflight compression.
+    """
+    if not history or not is_ollama_routed_model(model, base_url):
+        return history
+
+    max_msgs = max_messages
+    if max_msgs is None:
+        raw = os.environ.get("HERMES_OLLAMA_MAX_HISTORY_MESSAGES", "24").strip()
+        try:
+            max_msgs = max(4, int(raw))
+        except ValueError:
+            max_msgs = 24
+
+    max_tok = max_estimated_tokens
+    if max_tok is None:
+        raw_tok = os.environ.get("HERMES_OLLAMA_MAX_HISTORY_TOKENS", "10000").strip()
+        try:
+            max_tok = max(1024, int(raw_tok))
+        except ValueError:
+            max_tok = 10_000
+
+    if len(history) <= max_msgs and estimate_messages_tokens_rough(history) <= max_tok:
+        return history
+
+    tail = list(history[-max_msgs:])
+    while tail and tail[0].get("role") not in {"user", "system"}:
+        tail.pop(0)
+    return tail or list(history[-max_msgs:])
+
+
 def resolve_request_max_tokens(
     *,
     model: str,
