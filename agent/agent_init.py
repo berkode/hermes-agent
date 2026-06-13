@@ -1487,6 +1487,27 @@ def init_agent(
             agent._ollama_num_ctx,
         )
 
+    # Planner context_length may be 128K–256K while Ollama only allocates
+    # ollama_num_ctx (e.g. 16K). Cap the compressor threshold so resumed
+    # sessions trigger preflight trim/compress instead of sending 100+ turns.
+    if (
+        is_ollama_routed_model(agent.model, agent.base_url)
+        and agent._ollama_num_ctx
+        and hasattr(agent.context_compressor, "update_model")
+    ):
+        agent.context_compressor.update_model(
+            model=agent.model,
+            context_length=agent._ollama_num_ctx,
+            base_url=agent.base_url,
+            api_key=getattr(agent, "api_key", ""),
+            provider=agent.provider,
+        )
+        if not agent.quiet_mode:
+            _ra().logger.info(
+                "Ollama runtime context: compressor capped to %d tokens",
+                agent._ollama_num_ctx,
+            )
+
     if not agent.quiet_mode:
         if compression_enabled:
             print(f"📊 Context limit: {agent.context_compressor.context_length:,} tokens (compress at {int(compression_threshold*100)}% = {agent.context_compressor.threshold_tokens:,})")
