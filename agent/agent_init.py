@@ -39,6 +39,7 @@ from agent.model_metadata import (
     fetch_model_metadata,
     get_model_context_length,
     is_local_endpoint,
+    is_ollama_routed_model,
     query_ollama_num_ctx,
 )
 from agent.process_bootstrap import _install_safe_stdio

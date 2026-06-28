@@ -627,9 +627,12 @@ def start_all() -> tuple[int, str]:
     if deploy_profile() == "cloud":
         order = [
             "ollama",
+            "camofox-browser",
             "agency",
             "pimono",
+            "pimono-proxy",
             "bejmind",
+            "bejtrader",
             "nautilus",
             "predictx",
             "hermes-dashboard",
@@ -639,8 +642,11 @@ def start_all() -> tuple[int, str]:
     else:
         order = [
             "nginx",
+            "ollama",
+            "camofox-browser",
             "agency",
             "pimono",
+            "pimono-proxy",
             "bejmind",
             "bejtrader",
             "nautilus",
