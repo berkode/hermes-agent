@@ -2642,6 +2642,23 @@ class GatewaySlashCommandsMixin:
             state = mgr.resume()
             if state is None:
                 return t("gateway.goal.no_resume")
+            # Re-queue the continuation immediately so resuming after a
+            # quota/API failure doesn't need a manual kick message.
+            kick = mgr.next_continuation_prompt()
+            adapter = self.adapters.get(event.source.platform) if event.source else None
+            _quick_key = self._session_key_for_source(event.source) if event.source else None
+            if kick and adapter and _quick_key:
+                try:
+                    kick_event = MessageEvent(
+                        text=kick,
+                        message_type=MessageType.TEXT,
+                        source=event.source,
+                        message_id=None,
+                        channel_prompt=None,
+                    )
+                    self._enqueue_fifo(_quick_key, kick_event, adapter)
+                except Exception as exc:
+                    logger.debug("goal resume kickoff enqueue failed: %s", exc)
             return t("gateway.goal.resumed", goal=state.goal)
 
         if lower in {"clear", "stop", "done"}:

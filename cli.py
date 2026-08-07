@@ -10741,8 +10741,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         partial output landed, almost always says "continue", and the
         loop keeps going. Auto-pause keeps the goal recoverable via
         ``/goal resume`` once the user has sorted out what they want.
-        The empty-response skip mirrors the gateway guard at
-        ``_handle_message`` in ``gateway/run.py``.
+        Empty or provider-error responses also auto-pause (with a vault
+        checkpoint) via ``handle_goal_after_agent_turn`` — mirrored in
+        ``gateway/run.py`` and ``tui_gateway/server.py``.
         """
         mgr = self._get_goal_manager()
         if mgr is None or not mgr.is_active():
@@ -10820,23 +10821,29 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         except Exception:
             last_response = ""
 
-        # Skip judging on empty/whitespace-only responses. These are almost
-        # always transient failures (API error, empty stream) where the
-        # judge would say "continue" and trip the consecutive-parse-failures
-        # backstop unnecessarily. Mirrors the gateway guard.
-        if not last_response.strip():
-            return
-
         try:
-            from hermes_cli.goals import gather_background_processes as _gather_bg
+            from hermes_cli.goals import (
+                gather_background_processes as _gather_bg,
+                handle_goal_after_agent_turn as _goal_hook,
+                transcript_tail_from_messages as _tail,
+            )
+        except Exception as exc:
+            logging.debug("goal hook import failed: %s", exc)
+            return
+        try:
             _bg_procs = _gather_bg()
         except Exception:
             _bg_procs = None
 
-        decision = mgr.evaluate_after_turn(
+        # Shared post-turn handler: auto-pauses + vault-checkpoints the goal
+        # when the reply is empty or a bare provider failure (quota / auth /
+        # model / overload), judges normally otherwise.
+        decision = _goal_hook(
+            mgr,
             last_response,
             user_initiated=True,
             background_processes=_bg_procs,
+            transcript_tail=_tail(self.conversation_history),
         )
         msg = decision.get("message") or ""
         if msg:

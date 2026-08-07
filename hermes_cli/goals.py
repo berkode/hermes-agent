@@ -75,6 +75,55 @@ DEFAULT_MAX_CONSECUTIVE_PARSE_FAILURES = 3
 # run until the turn budget, wasting every turn on an unreachable judge.
 DEFAULT_MAX_CONSECUTIVE_TRANSPORT_FAILURES = 5
 
+# Agent-failure classification for the post-turn goal hook
+# (handle_goal_after_agent_turn). When the agent's final reply is empty or is
+# a bare provider error (quota exhausted, auth failure, missing model,
+# overload), judging it is pointless — the judge would say "continue" against
+# the same broken provider every turn until the budget burned out. The hook
+# auto-pauses instead and checkpoints the goal to the Obsidian vault
+# (hermes_cli/goal_vault.py) so /goal resume picks up where the loop stopped.
+_AGENT_FAILURE_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
+    (
+        "quota/rate-limit",
+        re.compile(
+            r"quota|rate.?limit|too many requests|\b429\b|insufficient[_ ]credits"
+            r"|credit balance|billing",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "auth",
+        re.compile(
+            r"\b401\b|\b403\b|unauthorized|invalid[_ ]api[_ ]key|authentication failed",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "model",
+        re.compile(
+            r"model.{0,40}(not found|unavailable|does not exist)|\b404\b.{0,40}model",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "overloaded",
+        re.compile(
+            r"overloaded|\b(502|503|529)\b|service unavailable|internal server error",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "api-error",
+        re.compile(
+            r"api.?(error|exception)|connection (error|refused|reset)|request timed? ?out",
+            re.IGNORECASE,
+        ),
+    ),
+]
+# Only short replies are eligible for failure classification — a long reply
+# that merely *mentions* "rate limit" is real work, not a provider error.
+_AGENT_FAILURE_MAX_CHARS = 600
+
 # Quality gates: deterministic shell commands that must pass before the goal
 # judge may declare the goal done. Defaults mirror the bounded-autonomy
 # pattern (per-gate retry limit + timeout, bounded output fed back to the
@@ -544,6 +593,10 @@ class GoalState:
     last_verdict: Optional[str] = None        # "done" | "continue" | "skipped"
     last_reason: Optional[str] = None
     paused_reason: Optional[str] = None       # why we auto-paused (budget, etc.)
+    # Bounded snippet of the failing agent reply when the post-turn hook
+    # auto-paused on an agent failure (quota / auth / model / empty). Shown
+    # in vault checkpoints so a human can see WHY the loop stopped.
+    last_error: Optional[str] = None
     consecutive_parse_failures: int = 0       # judge-output parse failures in a row
     # Transport failures are API/auth/network errors.  Broken API keys return
     # 401 every call — track them separately so the loop auto-pauses instead
@@ -610,6 +663,7 @@ class GoalState:
             last_verdict=data.get("last_verdict"),
             last_reason=data.get("last_reason"),
             paused_reason=data.get("paused_reason"),
+            last_error=data.get("last_error"),
             consecutive_parse_failures=int(data.get("consecutive_parse_failures", 0) or 0),
             consecutive_transport_failures=int(data.get("consecutive_transport_failures", 0) or 0),
             subgoals=subgoals,
@@ -648,6 +702,14 @@ class GoalState:
 
 def _meta_key(session_id: str) -> str:
     return f"goal:{session_id}"
+
+
+# Profile-level pointer to the session that most recently held an active or
+# paused goal. Written by save_goal, read by migrate_goal_session so
+# ``/goal resume`` in a FRESH session (after a crash/restart rotated the
+# session id) can find and adopt the orphaned goal instead of reporting
+# "No goal to resume".
+PROFILE_GOAL_META_KEY = "goal:last_active_session"
 
 
 _DB_CACHE: Dict[str, Any] = {}
@@ -705,16 +767,64 @@ def load_goal(session_id: str) -> Optional[GoalState]:
 
 
 def save_goal(session_id: str, state: GoalState) -> None:
-    """Persist a goal to SessionDB. No-op if DB unavailable."""
+    """Persist a goal to SessionDB and mirror it to the Obsidian vault.
+
+    Both writes are best-effort and independent: a missing DB must not block
+    the vault checkpoint (that checkpoint is exactly what survives crashes),
+    and a missing vault must not block DB persistence.
+    """
     if not session_id:
         return
     db = _get_session_db()
-    if db is None:
-        return
+    if db is not None:
+        try:
+            db.set_meta(_meta_key(session_id), state.to_json())
+            if state.status in {"active", "paused"}:
+                # Profile-level pointer for orphaned-goal recovery — see
+                # migrate_goal_session.
+                db.set_meta(PROFILE_GOAL_META_KEY, session_id)
+        except Exception as exc:
+            logger.debug("GoalManager: set_meta failed: %s", exc)
+    # Vault mirror (LATEST.md) so goal progress survives process crashes and
+    # provider outages. No-op when no vault is configured.
     try:
-        db.set_meta(_meta_key(session_id), state.to_json())
+        from hermes_cli.goal_vault import write_goal_checkpoint
+
+        write_goal_checkpoint(state, session_id)
     except Exception as exc:
-        logger.debug("GoalManager: set_meta failed: %s", exc)
+        logger.debug("GoalManager: vault checkpoint failed: %s", exc)
+
+
+def migrate_goal_session(new_session_id: str) -> Optional[GoalState]:
+    """Adopt the profile's most recent active/paused goal onto a new session.
+
+    Used by ``GoalManager.resume()`` when the current session has no goal
+    row: a crash, quota outage, or restart rotates the session id, and the
+    flat ``goal:<session_id>`` lookup would otherwise strand the goal. The
+    profile-level pointer written by :func:`save_goal` finds the orphan and
+    :func:`migrate_goal_to_session` carries it over (archiving the old row).
+
+    Returns the migrated state, or ``None`` when there is nothing to adopt.
+    Best-effort and never raises.
+    """
+    if not new_session_id:
+        return None
+    db = _get_session_db()
+    if db is None:
+        return None
+    try:
+        old_sid = str(db.get_meta(PROFILE_GOAL_META_KEY) or "")
+    except Exception as exc:
+        logger.debug("GoalManager: profile goal pointer read failed: %s", exc)
+        return None
+    if not old_sid or old_sid == new_session_id:
+        return None
+    state = load_goal(old_sid)
+    if state is None or state.status not in {"active", "paused"}:
+        return None
+    if migrate_goal_to_session(old_sid, new_session_id, reason="orphan-recovery"):
+        return load_goal(new_session_id)
+    return None
 
 
 def clear_goal(session_id: str) -> None:
@@ -1145,6 +1255,146 @@ def gather_background_processes(task_id: Optional[str] = None) -> List[Dict[str,
     return [s for s in sessions if isinstance(s, dict) and s.get("status") != "exited"]
 
 
+def is_agent_failure_response(response: str) -> Optional[str]:
+    """Classify an agent reply as an infrastructure failure, or ``None``.
+
+    Returns a short failure kind (``"empty"``, ``"quota/rate-limit"``,
+    ``"auth"``, ``"model"``, ``"overloaded"``, ``"api-error"``) when the
+    reply is empty or looks like a bare provider error; ``None`` when it
+    looks like real output. Only short replies are eligible — a long reply
+    that merely mentions "rate limit" is work, not a failure.
+    """
+    text = (response or "").strip()
+    if not text:
+        return "empty"
+    if len(text) > _AGENT_FAILURE_MAX_CHARS:
+        return None
+    for kind, pattern in _AGENT_FAILURE_PATTERNS:
+        if pattern.search(text):
+            return kind
+    return None
+
+
+def transcript_tail_from_messages(
+    messages: Optional[List[Dict[str, Any]]],
+    *,
+    max_messages: int = 6,
+    max_chars: int = 1500,
+) -> str:
+    """Render the last few conversation messages for a vault checkpoint.
+
+    Bounded plain-text tail (``role: text`` lines) so a human reading the
+    checkpoint sees the context the loop stopped in. Never raises.
+    """
+    if not messages:
+        return ""
+    lines: List[str] = []
+    try:
+        for msg in messages[-max_messages:]:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role") or "?")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                parts = [
+                    p.get("text", "")
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") in {"text", "output_text"}
+                ]
+                content = "\n".join(t for t in parts if t)
+            text = str(content or "").strip()
+            if text:
+                lines.append(f"{role}: {_truncate(text, 400)}")
+    except Exception:
+        return ""
+    return _truncate("\n".join(lines), max_chars)
+
+
+def handle_goal_after_agent_turn(
+    manager: "GoalManager",
+    last_response: str,
+    *,
+    user_initiated: bool = True,
+    background_processes: Optional[List[Dict[str, Any]]] = None,
+    transcript_tail: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared post-turn goal hook for the CLI, gateway, and TUI drivers.
+
+    Wraps :meth:`GoalManager.evaluate_after_turn` with one safeguard: when
+    the agent's reply IS the failure (empty stream, quota exhausted, auth
+    error, missing model), the goal auto-pauses and is checkpointed to the
+    Obsidian vault instead of being judged — judging a provider error burns
+    turn budget on "continue" verdicts against a broken provider. ``/goal
+    resume`` then re-activates the goal and re-queues the continuation.
+
+    Returns the same decision-dict shape as ``evaluate_after_turn``.
+    """
+    if manager is None or not manager.is_active():
+        state = manager.state if manager is not None else None
+        return {
+            "status": state.status if state else None,
+            "should_continue": False,
+            "continuation_prompt": None,
+            "verdict": "inactive",
+            "reason": "no active goal",
+            "message": "",
+        }
+
+    failure = is_agent_failure_response(last_response)
+    if failure is not None:
+        state = manager.state
+        state.last_error = _truncate((last_response or "").strip(), 500) or failure
+        manager.pause(reason=f"agent failure: {failure}")
+        try:
+            from hermes_cli.goal_vault import write_goal_checkpoint
+
+            write_goal_checkpoint(
+                state,
+                manager.session_id,
+                event=f"auto-pause ({failure})",
+                error=state.last_error,
+                transcript_tail=transcript_tail,
+                history_event=True,
+            )
+        except Exception as exc:
+            logger.debug("goal failure checkpoint failed: %s", exc)
+        return {
+            "status": "paused",
+            "should_continue": False,
+            "continuation_prompt": None,
+            "verdict": "agent_failure",
+            "reason": failure,
+            "message": (
+                f"⏸ Goal auto-paused — the last turn failed ({failure}). "
+                "Progress is checkpointed in the vault "
+                "(05-HERMES/control-room/active-goals/LATEST.md). "
+                "Fix the underlying issue, then /goal resume to continue."
+            ),
+        }
+
+    decision = manager.evaluate_after_turn(
+        last_response,
+        user_initiated=user_initiated,
+        background_processes=background_processes,
+    )
+    # Snapshot terminal transitions (done / paused) into vault history so the
+    # goal-history folder tells the full story, not just failures.
+    if decision.get("status") in {"done", "paused"} and manager.state is not None:
+        try:
+            from hermes_cli.goal_vault import write_goal_checkpoint
+
+            write_goal_checkpoint(
+                manager.state,
+                manager.session_id,
+                event=str(decision.get("status")),
+                transcript_tail=transcript_tail,
+                history_event=True,
+            )
+        except Exception as exc:
+            logger.debug("goal transition checkpoint failed: %s", exc)
+    return decision
+
+
 def draft_contract(objective: str, *, timeout: float = DEFAULT_JUDGE_TIMEOUT) -> Optional[GoalContract]:
     """Expand a plain-language objective into a structured completion contract.
 
@@ -1335,8 +1585,54 @@ class GoalManager:
         save_goal(self.session_id, self._state)
         return self._state
 
+    def adopt_orphaned_goal(self) -> Optional[GoalState]:
+        """Recover a goal stranded by a crash / restart / session rotation.
+
+        Tried by :meth:`resume` when this session has no goal row. Recovery
+        order: (1) the profile-level pointer written by ``save_goal`` (full
+        state, migrated onto this session), then (2) the Obsidian vault's
+        LATEST checkpoint (goal text + progress counters — contract/gates
+        are not recoverable from markdown, so the rebuilt state is minimal).
+        Returns the adopted state or ``None``.
+        """
+        if self._state is not None and self._state.status in {"active", "paused"}:
+            return self._state
+        state = migrate_goal_session(self.session_id)
+        if state is not None:
+            self._state = state
+            return state
+        try:
+            from hermes_cli.goal_vault import read_latest_goal_checkpoint
+
+            meta = read_latest_goal_checkpoint()
+        except Exception:
+            meta = None
+        if not meta or not str(meta.get("goal") or "").strip():
+            return None
+        if str(meta.get("status") or "") in {"done", "cleared"}:
+            return None
+        try:
+            turns_used = int(meta.get("turns_used") or 0)
+        except (TypeError, ValueError):
+            turns_used = 0
+        try:
+            max_turns = int(meta.get("max_turns") or self.default_max_turns)
+        except (TypeError, ValueError):
+            max_turns = self.default_max_turns
+        state = GoalState(
+            goal=str(meta["goal"]).strip(),
+            status="paused",
+            paused_reason="recovered from vault checkpoint",
+            turns_used=turns_used,
+            max_turns=max_turns,
+            created_at=time.time(),
+        )
+        self._state = state
+        save_goal(self.session_id, state)
+        return state
+
     def resume(self, *, reset_budget: bool = True) -> Optional[GoalState]:
-        if not self._state:
+        if not self._state and self.adopt_orphaned_goal() is None:
             return None
         self._state.status = "active"
         self._state.paused_reason = None
@@ -2128,6 +2424,11 @@ __all__ = [
     "save_goal",
     "clear_goal",
     "migrate_goal_to_session",
+    "migrate_goal_session",
     "judge_goal",
     "run_kanban_goal_loop",
+    "is_agent_failure_response",
+    "transcript_tail_from_messages",
+    "handle_goal_after_agent_turn",
+    "PROFILE_GOAL_META_KEY",
 ]

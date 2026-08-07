@@ -9956,7 +9956,10 @@ def _run_prompt_submit(
             # ("✓ Goal achieved" / "⏸ budget exhausted") is surfaced as
             # a system line so the user sees progress regardless of
             # outcome. Mirrors gateway/run._post_turn_goal_continuation.
-            if status == "complete" and isinstance(raw, str) and raw.strip():
+            # Runs even when `raw` is empty: the shared handler auto-pauses
+            # and vault-checkpoints the goal on agent failures (empty reply,
+            # quota, auth, model errors) instead of leaving it stranded.
+            if status == "complete" and isinstance(raw, str):
                 try:
                     from hermes_cli.goals import GoalManager
 
@@ -9977,7 +9980,10 @@ def _run_prompt_submit(
                                 _bg_procs = _gather_bg()
                             except Exception:
                                 _bg_procs = None
-                            decision = goal_mgr.evaluate_after_turn(
+                            from hermes_cli.goals import handle_goal_after_agent_turn
+
+                            decision = handle_goal_after_agent_turn(
+                                goal_mgr,
                                 raw,
                                 user_initiated=True,
                                 background_processes=_bg_procs,

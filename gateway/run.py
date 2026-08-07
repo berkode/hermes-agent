@@ -15701,20 +15701,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _final_text = str(_agent_result.get("final_response") or "")
                 elif isinstance(_agent_result, str):
                     _final_text = _agent_result
-                # Skip for empty responses (interrupted / errored) — the
-                # judge would almost always say "continue" and we'd loop
-                # on error. Let the user drive the next turn.
-                if _final_text.strip():
-                    try:
-                        session_entry = await self.async_session_store.get_or_create_session(source)
-                    except Exception:
-                        session_entry = None
-                    if session_entry is not None:
-                        await self._post_turn_goal_continuation(
-                            session_entry=session_entry,
-                            source=source,
-                            final_response=_final_text,
-                        )
+                # Run the hook even for empty responses: the shared handler
+                # (handle_goal_after_agent_turn) auto-pauses the goal and
+                # checkpoints it to the Obsidian vault when the turn failed
+                # (quota / API error / empty stream), instead of leaving the
+                # loop silently stranded until the user notices.
+                try:
+                    session_entry = await self.async_session_store.get_or_create_session(source)
+                except Exception:
+                    session_entry = None
+                if session_entry is not None:
+                    await self._post_turn_goal_continuation(
+                        session_entry=session_entry,
+                        source=source,
+                        final_response=_final_text,
+                    )
             except Exception as _goal_exc:
                 logger.debug("goal continuation hook failed: %s", _goal_exc)
             return _agent_result
@@ -18921,7 +18922,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:
             _bg_procs = None
 
-        decision = mgr.evaluate_after_turn(
+        # Shared post-turn handler: auto-pauses + vault-checkpoints the goal
+        # on agent failures (empty reply, quota, auth, model errors), judges
+        # normally otherwise. /goal resume re-queues the continuation.
+        from hermes_cli.goals import handle_goal_after_agent_turn
+
+        decision = handle_goal_after_agent_turn(
+            mgr,
             final_response or "",
             user_initiated=True,
             background_processes=_bg_procs,

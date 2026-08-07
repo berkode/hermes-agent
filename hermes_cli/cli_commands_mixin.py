@@ -2545,10 +2545,23 @@ class CLICommandsMixin:
                 _cprint(f"  {_DIM}No goal to resume.{_RST}")
             else:
                 _cprint(f"  ▶ Goal resumed: {state.goal}")
-                _cprint(
-                    f"  {_DIM}Send any message (or press Enter on an empty prompt "
-                    f"is a no-op; type 'continue' to kick it off).{_RST}"
-                )
+                # Re-queue the continuation immediately — resuming after a
+                # quota/API failure must not require a manual "continue".
+                kick = mgr.next_continuation_prompt()
+                queued = False
+                if kick:
+                    try:
+                        self._pending_input.put(kick)
+                        queued = True
+                    except Exception:
+                        queued = False
+                if queued:
+                    _cprint(f"  {_DIM}Continuing automatically…{_RST}")
+                else:
+                    _cprint(
+                        f"  {_DIM}Couldn't queue the continuation — send any "
+                        f"message to kick it off.{_RST}"
+                    )
             return
 
         if lower in {"clear", "stop", "done"}:

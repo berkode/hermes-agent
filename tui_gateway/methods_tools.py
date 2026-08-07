@@ -789,16 +789,14 @@ def _(rid, params: dict) -> dict:
             state = mgr.resume()
             if state is None:
                 return _ok(rid, {"type": "exec", "output": "No goal to resume."})
-            return _ok(
-                rid,
-                {
-                    "type": "exec",
-                    "output": (
-                        f"▶ Goal resumed: {state.goal}\n"
-                        "Send any message to continue, or wait — I'll take the next step on the next turn."
-                    ),
-                },
-            )
+            # Fire the continuation immediately: {type: send} makes the TUI
+            # client render `notice` as a system line and submit `message`
+            # as the next user turn — same mechanism as /goal set below.
+            kick = mgr.next_continuation_prompt()
+            notice = f"▶ Goal resumed: {state.goal}"
+            if kick:
+                return _ok(rid, {"type": "send", "notice": notice, "message": kick})
+            return _ok(rid, {"type": "exec", "output": notice})
         if lower in {"clear", "stop", "done"}:
             had = mgr.has_goal()
             mgr.clear()
