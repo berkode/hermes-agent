@@ -205,11 +205,19 @@ openpyxl writes formula strings but does not compute them. Excel recalculates on
 Run LibreOffice or a dedicated recalc step before delivery:
 
 ```bash
-# LibreOffice headless recalc
-libreoffice --headless --calc --convert-to xlsx ./out/model.xlsx --outdir ./out/
+# LibreOffice headless recalc (required for cached values)
+python /path/to/excel-author/scripts/recalc.py ./out/model.xlsx
+
+# HTML preview (shows formula text + banner when values are missing)
+python /path/to/excel-author/scripts/to_html.py ./out/model.xlsx
+
+# Provenance sidecar for human review
+python /path/to/excel-author/scripts/write_provenance.py ./out/model.xlsx \
+  --skill excel-author --skill-version 1.0.0 \
+  --source "user-provided" --privacy-posture hybrid
 ```
 
-Or use a Python recalc helper (see `scripts/recalc.py` in this skill).
+`recalc.py` needs LibreOffice (`libreoffice` / `soffice`) on PATH. On Oracle ARM install via `bejcapital/app/scripts/oracle/install-libreoffice-headless-remote.sh`. Without recalc, `to_html.py` still works but marks unrecalculated formula cells and shows a warning banner — do not treat those numbers as final.
 
 ## Model layout planning
 

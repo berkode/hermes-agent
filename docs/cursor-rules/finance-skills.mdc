@@ -1,0 +1,15 @@
+---
+description: Rules when editing optional-skills/finance
+alwaysApply: false
+globs:
+  - optional-skills/finance/**
+---
+
+# Finance optional skills
+
+- These are Anthropic financial-services adaptations (Apache-2.0): keep headless openpyxl; no Office-JS / Cowork / marketplace.
+- Delivery helpers: `excel-author/scripts/recalc.py`, `to_html.py`, `write_provenance.py`.
+- Data source order: finance MCP (if configured) → Dexter/FMP/SEC/IR → generic web last resort for public tickers. Never MCP-only refusal when Berkode fallbacks exist.
+- Description ≤ 60 chars; reference native Hermes tools (`read_file`, `terminal`, `web_extract`) not bare shell utilities.
+- Do not add an in-tree `plugins/financial-services/` product plugin.
+- Modeling skills need a capable model floor; do not assume `gemma3:4b` can produce institutional DCFs.
