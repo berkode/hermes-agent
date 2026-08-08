@@ -24,7 +24,7 @@ import express from 'express';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
-import { mkdirSync, readFileSync, existsSync, readdirSync, unlinkSync } from 'fs';
+import { mkdirSync, readFileSync, existsSync, readdirSync, unlinkSync, appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { execFileSync } from 'child_process';
@@ -113,6 +113,74 @@ const PAIR_JSON = args.includes('--pair-json');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const WHATSAPP_DM_POLICY = String(process.env.WHATSAPP_DM_POLICY || 'open').trim().toLowerCase();
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
+// Groups to observe even in self-chat mode (comma-separated JIDs like
+// 120363...@g.us). Messages are forwarded to the gateway for silent
+// buffering (Hermes group-watch plugin); they do not open pairing flows
+// because the plugin returns action=skip unless the bot is mentioned.
+const OBSERVE_GROUPS = new Set(
+  String(process.env.WHATSAPP_OBSERVE_GROUPS || '')
+    .split(',')
+    .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+);
+// Also load JIDs written by the Hermes group-watch plugin (config.yaml is
+// the source of truth; env is the bootstrap). File format: one JID per line.
+try {
+  const observeFile = path.join(SESSION_DIR, 'observe-groups.txt');
+  if (existsSync(observeFile)) {
+    for (const line of readFileSync(observeFile, 'utf8').split('\n')) {
+      const jid = line.trim();
+      if (jid && !jid.startsWith('#')) OBSERVE_GROUPS.add(jid);
+    }
+  }
+} catch {}
+
+function _observeTextFromMsg(msg) {
+  try {
+    const content = getMessageContent(msg) || {};
+    if (typeof content.conversation === 'string' && content.conversation.trim()) {
+      return content.conversation.trim();
+    }
+    const ext = content.extendedTextMessage?.text;
+    if (typeof ext === 'string' && ext.trim()) return ext.trim();
+    const cap =
+      content.imageMessage?.caption
+      || content.videoMessage?.caption
+      || content.documentMessage?.caption;
+    if (typeof cap === 'string' && cap.trim()) return cap.trim();
+  } catch {}
+  return '';
+}
+
+function bufferObserveGroup({ chatId, senderId, text, fromMe }) {
+  const body = (text || '').trim();
+  if (!body) return;
+  try {
+    const dir = path.join(process.env.HOME || '/home/ubuntu', '.hermes', 'logs', 'group-watch');
+    mkdirSync(dir, { recursive: true });
+    const day = new Date().toISOString().slice(0, 10);
+    const entry = {
+      ts: Date.now() / 1000,
+      platform: 'whatsapp',
+      chat_id: chatId,
+      chat_name: chatId,
+      user_id: senderId,
+      user_name: fromMe ? 'owner' : (senderId || ''),
+      text: body.slice(0, 2000),
+      from_me: !!fromMe,
+      source: 'bridge-observe',
+    };
+    appendFileSync(path.join(dir, `${day}.jsonl`), JSON.stringify(entry) + '\n');
+    console.log(JSON.stringify({
+      event: 'observe_buffered',
+      chatId,
+      chars: body.length,
+    }));
+  } catch (err) {
+    console.warn('[bridge] observe buffer write failed:', err?.message || err);
+  }
+}
+
 const DEFAULT_REPLY_PREFIX = '⚕ *Hermes Agent*\n────────────\n';
 const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
   ? DEFAULT_REPLY_PREFIX
@@ -558,16 +626,41 @@ async function startSocket() {
       // Handle fromMe messages based on mode
       let fromOwner = false;
       if (msg.key.fromMe) {
-        if (isGroup || chatId.includes('status')) {
+        if (chatId.includes('status')) {
           emitDebugEvent({
             stage: 'ignored',
-            reason: isGroup ? 'from_me_group' : 'from_me_status',
+            reason: 'from_me_status',
             chatId: redactWhatsAppId(chatId),
           });
           continue;
         }
-
-        if (WHATSAPP_MODE === 'bot') {
+        if (isGroup) {
+          // Owner-typed messages in watched groups are observed (group-watch).
+          // Unwatched groups stay dropped. Skip Hermes' own outbound echoes.
+          if (!OBSERVE_GROUPS.has(chatId) || recentlySentIds.has(msg.key.id)) {
+            emitDebugEvent({
+              stage: 'ignored',
+              reason: OBSERVE_GROUPS.has(chatId) ? 'agent_echo_group' : 'from_me_group',
+              chatId: redactWhatsAppId(chatId),
+            });
+            continue;
+          }
+          fromOwner = true;
+          try {
+            console.log(JSON.stringify({
+              event: 'observe',
+              reason: 'self_chat_observe_group_from_me',
+              chatId,
+              senderId,
+            }));
+          } catch {}
+          bufferObserveGroup({
+            chatId,
+            senderId,
+            text: _observeTextFromMsg(msg),
+            fromMe: true,
+          });
+        } else if (WHATSAPP_MODE === 'bot') {
           // Bot mode: separate bot number. fromMe inbound is either
           //   (a) an echo of our own /send (recentlySentIds will catch it), or
           //   (b) a message the owner typed from their own phone using the
@@ -636,17 +729,40 @@ async function startSocket() {
       // to arbitrary incoming messages (#8389).
       if (!msg.key.fromMe) {
         if (WHATSAPP_MODE === 'self-chat') {
-          try {
-            console.log(JSON.stringify({
-              event: 'ignored',
-              reason: 'self_chat_mode_rejects_non_self',
+          if (isGroup && OBSERVE_GROUPS.has(chatId)) {
+            // Observe-only: let the message reach the gateway. The
+            // group-watch plugin buffers it and skips agent dispatch
+            // unless a mention pattern matches.
+            try {
+              console.log(JSON.stringify({
+                event: 'observe',
+                reason: 'self_chat_observe_group',
+                chatId,
+                senderId,
+              }));
+            } catch {}
+            bufferObserveGroup({
               chatId,
               senderId,
-            }));
-          } catch {}
-          continue;
-        }
-        if (WHATSAPP_DM_POLICY !== 'pairing' && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+              text: _observeTextFromMsg(msg),
+              fromMe: false,
+            });
+          } else {
+            try {
+              console.log(JSON.stringify({
+                event: 'ignored',
+                reason: 'self_chat_mode_rejects_non_self',
+                chatId,
+                senderId,
+              }));
+            } catch {}
+            continue;
+          }
+        } else if (
+          WHATSAPP_DM_POLICY !== 'pairing'
+          && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)
+          && !(isGroup && OBSERVE_GROUPS.has(chatId))
+        ) {
           try {
             console.log(JSON.stringify({
               event: 'ignored',
@@ -1103,6 +1219,33 @@ app.get('/chat/:id', async (req, res) => {
   });
 });
 
+// Resolve a chat.whatsapp.com invite code → group JID + subject.
+// Invite link https://chat.whatsapp.com/CxPMKb4n... → code = CxPMKb4n...
+app.get('/invite/:code', async (req, res) => {
+  const code = String(req.params.code || '').trim();
+  if (!code) {
+    return res.status(400).json({ error: 'missing invite code' });
+  }
+  if (!sock) {
+    return res.status(503).json({ error: 'bridge not connected' });
+  }
+  try {
+    const info = await sock.groupGetInviteInfo(code);
+    return res.json({
+      chatId: info.id,
+      name: info.subject || '',
+      size: info.size,
+      creation: info.creation,
+      desc: info.desc || '',
+    });
+  } catch (err) {
+    return res.status(404).json({
+      error: 'invite resolve failed',
+      detail: err?.message || String(err),
+    });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -1111,6 +1254,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     scriptHash: SCRIPT_HASH,
     sendReadReceipts: SEND_READ_RECEIPTS,
+    observeGroups: OBSERVE_GROUPS.size,
   });
 });
 
@@ -1135,6 +1279,9 @@ if (PAIR_ONLY) {
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`🌉 WhatsApp bridge listening on port ${PORT} (mode: ${WHATSAPP_MODE})`);
     console.log(`📁 Session stored in: ${SESSION_DIR}`);
+    if (OBSERVE_GROUPS.size > 0) {
+      console.log(`👁  Observing ${OBSERVE_GROUPS.size} group(s) even in self-chat mode`);
+    }
     if (ALLOWED_USERS.size > 0) {
       console.log(`🔒 Allowed users: ${Array.from(ALLOWED_USERS).join(', ')}`);
     } else if (WHATSAPP_MODE === 'self-chat') {
