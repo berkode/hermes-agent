@@ -337,6 +337,29 @@ function appendSessionFilters(url: string, options: SessionQueryOptions): string
 export const api = {
   buildWsUrl,
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+  getServicesStatus: () => fetchJSON<ServicesStatusResponse>("/api/services/status"),
+  postServicesBulk: (action: "start-llm" | "start-all" | "stop-all") =>
+    fetchJSON<ServicesActionResponse>(`/api/services/${action}`, { method: "POST" }),
+  postServicesPerService: (
+    action: "start" | "stop" | "toggle",
+    service: string,
+  ) =>
+    fetchJSON<ServicesActionResponse>(
+      `/api/services/${action}/${encodeURIComponent(service)}`,
+      { method: "POST" },
+    ),
+  getAgentRuns: (limit = 50) =>
+    fetchJSON<AgentsListResponse>(`/api/bejcapital/agents/runs?limit=${limit}`),
+  createAgentRun: (body: AgentRunCreatePayload) =>
+    fetchJSON<unknown>("/api/bejcapital/agents/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getAgentCapabilities: () =>
+    fetchJSON<AgentCapabilitiesResponse>("/api/bejcapital/agents/capabilities"),
+  getAgentRun: (runId: string) =>
+    fetchJSON<unknown>(`/api/bejcapital/agents/runs/${encodeURIComponent(runId)}`),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *
@@ -1845,6 +1868,53 @@ export interface PlatformStatus {
   error_message?: string;
   state: string;
   updated_at: string;
+}
+
+export interface ServicesStatusResponse {
+  available?: boolean;
+  error?: string;
+  services: Record<string, boolean>;
+  deploy_profile?: "local" | "cloud";
+  service_order?: string[];
+}
+
+export interface ServicesActionResponse {
+  ok: boolean;
+  message: string;
+  status: ServicesStatusResponse;
+}
+
+export interface AgentRunRow {
+  run_id: string;
+  runtime: string;
+  workflow: string;
+  status: string;
+  summary?: string;
+  created_at?: string;
+}
+
+export interface AgentsListResponse {
+  runs: AgentRunRow[];
+  error?: string;
+  available?: boolean;
+}
+
+export interface AgentRunCreatePayload {
+  runtime?: string;
+  workflow?: string;
+  summary?: string;
+  tasks?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentCapabilitiesResponse {
+  capabilities: Array<{
+    name: string;
+    description: string;
+    requires_approval?: boolean;
+    category?: string;
+  }>;
+  control_plane?: string;
 }
 
 export interface StatusResponse {

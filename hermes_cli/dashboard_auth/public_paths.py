@@ -42,6 +42,12 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # liveness probe in
     # ``docs/agent-dashboard-public-url-contract.md`` (NAS side).
     "/api/status",
+    # BejCapital fleet liveness (booleans only — no secrets). Used by the
+    # Services tab before/without a session cookie in loopback mode.
+    "/api/services/status",
+    "/api/bejcapital/agents/status",
+    "/api/bejcapital/agents/runs",
+    "/api/bejcapital/agents/capabilities",
     # Read-only config-defaults / schema feeds for the SPA's Config page.
     "/api/config/defaults",
     "/api/config/schema",
