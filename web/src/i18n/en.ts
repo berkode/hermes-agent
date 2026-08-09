@@ -855,4 +855,16 @@ export const en: Translations = {
     commentHintTitle:
       "Comments are the channel for talking to a task's worker. They land on the thread immediately — no need to block the task first. A running worker picks the thread up on its next kanban_show() or respawn; blocking is only for when you want the worker to STOP and wait for your input.",
   },
+
+  services: {
+    subtitle:
+      "Start and stop Pimono, BejMind, and the Hermes gateway (manual only — no LaunchAgents).",
+    manualNote:
+      "Bejcapital fleet control. Dashboard on :8000 replaces the old central agency. No LaunchAgents.",
+    startLlm: "Start LLM stack",
+    startAll: "Start all",
+    stopAll: "Stop all",
+    up: "Up",
+    down: "Down",
+  },
 };

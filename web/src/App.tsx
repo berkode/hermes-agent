@@ -44,6 +44,7 @@ import {
   Puzzle,
   Radio,
   RotateCw,
+  Server,
   Settings,
   Shield,
   ShieldCheck,
@@ -55,6 +56,7 @@ import {
   Wrench,
   X,
   Zap,
+  Bot,
 } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { SelectionSwitcher } from "@nous-research/ui/ui/components/selection-switcher";
@@ -95,6 +97,8 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const WebhooksPage = lazy(() => import("@/pages/WebhooksPage"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
+const ServicesPage = lazy(() => import("@/pages/ServicesPage"));
+const AgentsPage = lazy(() => import("@/pages/AgentsPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -154,6 +158,8 @@ const CHAT_NAV_ITEM: NavItem = {
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
+  "/services": ServicesPage,
+  "/agents": AgentsPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
@@ -183,6 +189,16 @@ function ChatRouteSink() {
 }
 
 const BUILTIN_NAV_REST: NavItem[] = [
+  {
+    path: "/services",
+    label: "Services",
+    icon: Server,
+  },
+  {
+    path: "/agents",
+    label: "Agents",
+    icon: Bot,
+  },
   {
     path: "/sessions",
     labelKey: "sessions",
