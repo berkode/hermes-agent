@@ -4,7 +4,7 @@
 
 Name: **RockerforceOps 09** (short: **RO-09**)  
 Company: **Rockerforce** (AI automation agency)  
-Hermes profile: **`bej`** (sales/delivery); social atomization may hand off to **`social`**  
+Hermes profile: **`bej`**  
 Role: **Lead generation, proposals, project delivery tracking, customer success**
 
 ## Core Mission
@@ -47,7 +47,7 @@ Save as `05-HERMES/agents/employee-09-rockerforce-sales/projects/YYYY-WW-{projec
 | **Primary output** | Weekly lead pack + proposal/delivery/CS status for active projects |
 | **Cadence** | Weekly |
 | **Vault output path** | `05-HERMES/agents/employee-09-rockerforce-sales/{leads,projects}/` |
-| **Hermes profile** | `bej` (social atomization may hand off to `social`) |
+| **Hermes profile** | `bej` |
 | **Done when** | Leads qualified, proposal drafts and delivery milestones documented — no auto-send |
 | **Blocked** | Auto-send proposals; final pricing or deal closure without human approval |
 | **Triggered by Grok CoS when…** | Lead gen sprint, proposal draft, delivery check-in, or CS follow-up batch |

@@ -1,17 +1,15 @@
 # Organization chart — Grok office + Hermes plant
 
-Berkode runs a **two-layer** model: Grok agents are the conversational office; Hermes profiles execute scheduled work and specialist personas in the Obsidian vault.
+Berkode runs a **two-layer** model: Grok agents are the conversational office; Hermes profile **`bej`** executes scheduled work and all 12 specialist personas in the Obsidian vault.
 
 ## Reporting lines
 
 ```text
 Berk (operator)
 ├── Grok Chief of Staff          ← company: org chart, priorities, Hermes staff routing
-│   └── Hermes profiles
-│       ├── bej    → Employees 01, 02, 03, 06, 07, 08, 09, 12
-│       ├── ops    → Employees 04, 05, 11 + kanban-orchestrator (ops-employee skill)
-│       └── social → Employee 10
-│           └── 12 employee personas (see FLEET_REGISTRY.md)
+│   └── Hermes profile `bej`
+│       └── Employees 01–12 (see FLEET_REGISTRY.md)
+│           └── kanban-orchestrator skill on same profile when orchestrating board berkode-ops
 │
 └── Grok CEO Assistant           ← personal only: calendar, digest, Perplexity/Obsidian memory
     (NOT company staff — does not manage Hermes employees)
@@ -30,17 +28,15 @@ Berk (operator)
 
 1. **Talk to Grok CoS** — strategy, cross-company priorities, "run Employee 03 portfolio review", org changes, who owns what.
 2. **Talk to Grok CEO Assistant** — personal schedule, personal notes, non-company errands.
-3. **Hermes cron + Kanban** — BejChief 01 and the other personas execute on schedule or when CoS (or Kanban) dispatches work to `bej` / `ops` / `social`.
+3. **Hermes cron + Kanban** — all personas run on **`bej`**; BejChief 01 and others execute on schedule or when CoS (or Kanban) dispatches work.
 
-## Hermes profiles (execution layer)
+## Hermes profile (execution layer)
 
-| Profile | Primary employees | Skill / orchestrator |
-|---------|-------------------|----------------------|
-| `bej` | 01, 02, 03, 06, 07, 08, 09, 12 | Company brain, trading desk, Brentford/Altair/Rockerforce |
-| `ops` | 04, 05, 11 | `kanban-orchestrator`, terminal/CI on bejcapital cwd |
-| `social` | 10 | X/email drafts (approval required before send) |
+| Profile | Employees | Skill / orchestrator |
+|---------|-----------|----------------------|
+| `bej` | 01–12 (all personas) | Company brain, trading desk, Brentford/Altair/Rockerforce, terminal/CI on bejcapital cwd, social drafts (approval required), **`kanban-orchestrator`** on board `berkode-ops` |
 
-Kanban board **`berkode-ops`** fans out cross-desk work; orchestrator runs on **`ops`**. See [`shared/assignee-map.md`](shared/assignee-map.md).
+Profiles **`ops`** and **`social`** are retired — do not create or route to them. See [`shared/assignee-map.md`](shared/assignee-map.md).
 
 ## Draft-only boundaries (all layers)
 

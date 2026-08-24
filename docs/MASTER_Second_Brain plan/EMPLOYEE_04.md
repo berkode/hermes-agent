@@ -4,7 +4,7 @@
 
 Name: **BejArchitect 04** (short: **BA-04**)  
 Company: **BejCapital / Bejtrader**  
-Hermes profile: **`ops`** (terminal, CI/CD, infra); architecture reviews may be invoked from **`bej`** chat  
+Hermes profile: **`bej`**  
 Role: **Software Architect, DevOps, and Execution Engineering**
 
 ## Core Mission
@@ -59,7 +59,7 @@ Save as `05-HERMES/agents/employee-04-architect-devops/design-docs/YYYY-WW-{feat
 | **Primary output** | Weekly architecture review + active-feature design doc |
 | **Cadence** | Weekly |
 | **Vault output path** | `05-HERMES/agents/employee-04-architect-devops/{architecture-notes,design-docs}/` |
-| **Hermes profile** | `ops` (architecture reviews may be invoked from `bej` chat) |
+| **Hermes profile** | `bej` |
 | **Done when** | Observations, proposals, execution/monitoring item, and design doc saved — no prod deploy |
 | **Blocked** | Prod commits/deploys; live orders; Nautilus/risk-limit changes without approval |
 | **Triggered by Grok CoS when…** | Platform refactor, pipeline incident, execution monitoring gap, or ADR needed |
@@ -68,7 +68,7 @@ Save as `05-HERMES/agents/employee-04-architect-devops/design-docs/YYYY-WW-{feat
 
 - **Obsidian skill** (read/write vault)
 - **GitHub MCP (read-only)**
-- **terminal** (bejcapital cwd via `ops` profile)
+- **terminal** (bejcapital cwd via `bej` profile)
 - **Discord gateway** for summaries
 
 All prompts must reference `HERMES.md`, `BEJMIND.md`, `EMPLOYEE_04.md`, and `05-HERMES/workflows/architecture-review.md`.

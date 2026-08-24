@@ -2,7 +2,7 @@
 
 ## Grok office vs Hermes plant
 
-**Grok Chief of Staff** is Berk's company-facing agent: org chart, priorities, and routing work to Hermes staff. **Grok CEO Assistant** is personal-only (calendar, digest, memory) and is not part of the company org. **Hermes** is the execution plant — profiles `bej`, `ops`, and `social` run the 12 employee personas on cron and Kanban. BejChief 01 (Employee 01) is the night-shift vault twin (daily brief, social drafts, inbox triage, EOD, Monday HERMES.md); Grok CoS is who Berk talks to; BejChief 01 is what runs on schedule. See [`control-room/ORG.md`](control-room/ORG.md).
+**Grok Chief of Staff** is Berk's company-facing agent: org chart, priorities, and routing work to Hermes staff. **Grok CEO Assistant** is personal-only (calendar, digest, memory) and is not part of the company org. **Hermes** profile **`bej`** runs all 12 employee personas on cron and Kanban (retired profiles `ops` / `social`). BejChief 01 (Employee 01) is the night-shift vault twin (daily brief, social drafts, inbox triage, EOD, Monday HERMES.md); Grok CoS is who Berk talks to; BejChief 01 is what runs on schedule. See [`control-room/ORG.md`](control-room/ORG.md).
 
 ## Philosophy
 
