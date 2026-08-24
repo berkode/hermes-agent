@@ -5,7 +5,7 @@ Mac-local fleet governance (adapted from the [Hermes Agent Operator](https://git
 | Path | Purpose |
 |------|---------|
 | `control-room/` | Registry, runbooks, env maps (this folder) |
-| `~/.hermes/profiles/{bej,ops,social}/` | Live Hermes runtime (config, cron, sessions) |
+| `~/.hermes/profiles/bej/` | Live Hermes runtime (config, cron, sessions, Kanban orchestrator) |
 | `~/Master/05-HERMES/` | Company Brain + employee personas + workflows |
 
 ## Operator levels (Berkode)
@@ -13,17 +13,19 @@ Mac-local fleet governance (adapted from the [Hermes Agent Operator](https://git
 | Level | What you have |
 |-------|----------------|
 | 1 | One lived-in agent (`bej`), shadow-mode rituals |
-| 2 | Profiles `bej` / `ops` / `social` + 12 employee personas |
-| 3 | `ops` Kanban orchestrator → board `berkode-ops` |
+| 2 | Profile `bej` + 12 employee personas (retired `ops` / `social`) |
+| 3 | `bej` + **`kanban-orchestrator`** → board `berkode-ops` |
 | 4 | Cron jobs (paused by default); requires gateway/dashboard up |
 
-## Three interaction paths
+## Interaction paths
 
-1. **Control** — edit this folder; `hermes dashboard` Services tab
-2. **Direct** — `hermes -p bej` (or `ops` / `social`) when you know the desk
-3. **Orchestrated** — `hermes -p ops` + Kanban fan-out for cross-desk work
+1. **Grok CoS** — company conversation, org chart, route work to Hermes (`control-room/ORG.md`)
+2. **Grok CEO Assistant** — personal calendar/digest only (not Hermes staff)
+3. **Control** — edit this folder; `hermes dashboard` Services tab
+4. **Direct** — `hermes -p bej` for any employee desk
+5. **Orchestrated** — `hermes -p bej` + Kanban fan-out (`kanban-orchestrator` skill)
 
-See [`FLEET_REGISTRY.md`](FLEET_REGISTRY.md) and [`shared/assignee-map.md`](shared/assignee-map.md).
+See [`ORG.md`](ORG.md), [`FLEET_REGISTRY.md`](FLEET_REGISTRY.md), and [`shared/assignee-map.md`](shared/assignee-map.md).
 
 ## Quick commands
 
@@ -32,7 +34,7 @@ hermes dashboard                    # http://127.0.0.1:8000
 hermes -p bej cron list
 hermes -p bej master install-cron --vault-path ~/Master
 hermes kanban list --board berkode-ops
-hermes -p ops profile list
+hermes -p bej profile list
 ```
 
 Fleet processes: start/stop via dashboard **Services** (`hermes_cli/bejcapital_fleet.py`). No LaunchAgents — manual start per operator policy.

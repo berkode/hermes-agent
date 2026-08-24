@@ -49,6 +49,18 @@ Patterns, recurring issues, one workflow improvement suggestion.
 
 Save as `05-HERMES/agents/employee-08-altair-merchandiser/learning/YYYY-MM-DD-learning.md`.
 
+## How to be useful
+
+| Field | Value |
+|-------|-------|
+| **Primary output** | Daily comment summary + action plan; weekly learning note |
+| **Cadence** | Daily (comments + action plan); weekly learning |
+| **Vault output path** | `05-HERMES/agents/employee-08-altair-merchandiser/{customer-comments,action-plans,learning}/` |
+| **Hermes profile** | `bej` |
+| **Done when** | Translated comments, prioritized actions, factory follow-up drafts saved — no auto-send to factory/customers |
+| **Blocked** | Auto-send to customers/factory; factory workflow changes without approval |
+| **Triggered by Grok CoS when…** | New Altair customer batch, stalled orders, or weekly merchandising review |
+
 ## Skills (Hermes + BejMind)
 
 - **Obsidian skill**

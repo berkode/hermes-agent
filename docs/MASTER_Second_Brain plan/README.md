@@ -88,13 +88,17 @@ Paths in workflow markdown are **relative to the vault root** (no hardcoded `MAS
 
 See `SHADOW_MODE.md` (copied to `05-HERMES/SHADOW_MODE.md` in the vault). Run workflows manually in `hermes -p bej` for one week before enabling cron.
 
+## Grok office vs Hermes plant
+
+Berk talks to **Grok Chief of Staff** for company work (org chart, priorities, routing Hermes staff). **Grok CEO Assistant** handles personal calendar and digest only — not company briefs or employee routing. **Hermes profile `bej`** executes all 12 employee personas on cron and Kanban (`kanban-orchestrator` on the same profile); BejChief 01 runs the scheduled plant (brief, inbox, social drafts). Retired profiles `ops` / `social`. See [`control-room/ORG.md`](control-room/ORG.md).
+
 ## Operator levels (Berkode)
 
 | Level | Setup |
 |-------|--------|
 | 1 | `bej` profile + shadow mode (`SHADOW_MODE.md`) |
-| 2 | Profiles `bej` / `ops` / `social` + 12 employees (`AGILE_REVISION.md`) |
-| 3 | `ops` Kanban orchestrator → board `berkode-ops` (`control-room/shared/assignee-map.md`) |
+| 2 | Single profile `bej` + 12 employees (`AGILE_REVISION.md`) |
+| 3 | `bej` Kanban orchestrator → board `berkode-ops` (`control-room/shared/assignee-map.md`) |
 | 4 | Cron jobs (paused by default); gateway via `hermes dashboard` Services |
 
 ## Training order

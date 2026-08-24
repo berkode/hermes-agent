@@ -1,5 +1,9 @@
 # Agile Startup Revision — 12 Core Roles (Not 30)
 
+## Grok office vs Hermes plant
+
+**Grok Chief of Staff** is Berk's company-facing agent: org chart, priorities, and routing work to Hermes staff. **Grok CEO Assistant** is personal-only (calendar, digest, memory) and is not part of the company org. **Hermes** profile **`bej`** runs all 12 employee personas on cron and Kanban (retired profiles `ops` / `social`). BejChief 01 (Employee 01) is the night-shift vault twin (daily brief, social drafts, inbox triage, EOD, Monday HERMES.md); Grok CoS is who Berk talks to; BejChief 01 is what runs on schedule. See [`control-room/ORG.md`](control-room/ORG.md).
+
 ## Philosophy
 
 **Startup culture > Corporate structure.**  
@@ -41,7 +45,7 @@ We want **agile, multi-role employees** who:
 | Employee 25 (Marketing Specialist) | → Employee 10 (Marketing + Social) |
 | Employee 27 (CFO) | → Employee 12 (CFO + CTO) |
 | Employee 28 (CTO) | → Employee 12 (CFO + CTO) |
-| Employee 29 (HR) | → Employee 01 (Chief of Staff) |
+| Employee 29 (HR) | → Grok Chief of Staff (org chart; not a 13th Hermes employee) |
 | Employee 30 (IT Support) | → Employee 04 (Architect + DevOps) |
 
 ### Why This Works
