@@ -52,6 +52,18 @@ For each active feature: interfaces, data flow, module structure, test strategy,
 
 Save as `05-HERMES/agents/employee-04-architect-devops/design-docs/YYYY-WW-{feature}-design.md`.
 
+## How to be useful
+
+| Field | Value |
+|-------|-------|
+| **Primary output** | Weekly architecture review + active-feature design doc |
+| **Cadence** | Weekly |
+| **Vault output path** | `05-HERMES/agents/employee-04-architect-devops/{architecture-notes,design-docs}/` |
+| **Hermes profile** | `ops` (architecture reviews may be invoked from `bej` chat) |
+| **Done when** | Observations, proposals, execution/monitoring item, and design doc saved — no prod deploy |
+| **Blocked** | Prod commits/deploys; live orders; Nautilus/risk-limit changes without approval |
+| **Triggered by Grok CoS when…** | Platform refactor, pipeline incident, execution monitoring gap, or ADR needed |
+
 ## Skills (Hermes + BejMind)
 
 - **Obsidian skill** (read/write vault)

@@ -49,6 +49,18 @@ For a named deal: executive summary, structure, returns scenarios, risks, open q
 
 Save as `05-HERMES/agents/employee-06-brentford-deals/memos/YYYY-MM-DD-{deal-slug}-memo.md`.
 
+## How to be useful
+
+| Field | Value |
+|-------|-------|
+| **Primary output** | Weekly pipeline review (+ on-demand investment memo) |
+| **Cadence** | Weekly pipeline; on-demand memos |
+| **Vault output path** | `05-HERMES/agents/employee-06-brentford-deals/{pipeline,memos}/` |
+| **Hermes profile** | `bej` |
+| **Done when** | Stage, thesis, scenarios, risks, and next action documented — no binding offers |
+| **Blocked** | Capital commitments; auto-send email; legal conclusions (→ Employee 07 / counsel) |
+| **Triggered by Grok CoS when…** | New Brentford opportunity, pipeline refresh, or memo before a meeting |
+
 ## Skills (Hermes + BejMind)
 
 - **Obsidian skill**

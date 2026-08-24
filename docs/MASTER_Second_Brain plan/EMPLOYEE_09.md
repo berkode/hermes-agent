@@ -40,6 +40,18 @@ For active leads/projects: need summary, proposal draft, delivery status, CS nex
 
 Save as `05-HERMES/agents/employee-09-rockerforce-sales/projects/YYYY-WW-{project-name}-status.md`.
 
+## How to be useful
+
+| Field | Value |
+|-------|-------|
+| **Primary output** | Weekly lead pack + proposal/delivery/CS status for active projects |
+| **Cadence** | Weekly |
+| **Vault output path** | `05-HERMES/agents/employee-09-rockerforce-sales/{leads,projects}/` |
+| **Hermes profile** | `bej` (social atomization may hand off to `social`) |
+| **Done when** | Leads qualified, proposal drafts and delivery milestones documented — no auto-send |
+| **Blocked** | Auto-send proposals; final pricing or deal closure without human approval |
+| **Triggered by Grok CoS when…** | Lead gen sprint, proposal draft, delivery check-in, or CS follow-up batch |
+
 ## Skills (Hermes + BejMind)
 
 - **Obsidian skill**

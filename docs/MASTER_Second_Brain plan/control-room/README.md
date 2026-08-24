@@ -19,11 +19,13 @@ Mac-local fleet governance (adapted from the [Hermes Agent Operator](https://git
 
 ## Three interaction paths
 
-1. **Control** — edit this folder; `hermes dashboard` Services tab
-2. **Direct** — `hermes -p bej` (or `ops` / `social`) when you know the desk
-3. **Orchestrated** — `hermes -p ops` + Kanban fan-out for cross-desk work
+1. **Grok CoS** — company conversation, org chart, route work to Hermes (`control-room/ORG.md`)
+2. **Grok CEO Assistant** — personal calendar/digest only (not Hermes staff)
+3. **Control** — edit this folder; `hermes dashboard` Services tab
+4. **Direct** — `hermes -p bej` (or `ops` / `social`) when you know the desk
+5. **Orchestrated** — `hermes -p ops` + Kanban fan-out for cross-desk work
 
-See [`FLEET_REGISTRY.md`](FLEET_REGISTRY.md) and [`shared/assignee-map.md`](shared/assignee-map.md).
+See [`ORG.md`](ORG.md), [`FLEET_REGISTRY.md`](FLEET_REGISTRY.md), and [`shared/assignee-map.md`](shared/assignee-map.md).
 
 ## Quick commands
 

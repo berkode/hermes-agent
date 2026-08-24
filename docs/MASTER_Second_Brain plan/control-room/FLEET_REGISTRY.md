@@ -1,5 +1,7 @@
 # Fleet registry
 
+**Operator front door:** Grok Chief of Staff (company). Berk talks to Grok CoS; CoS routes work to Hermes profiles below. Personal calendar/digest → Grok CEO Assistant (not Hermes Employee 01).
+
 | Employee | Role | Hermes profile | Kanban assignee | Priority | Workflows (repo) |
 |----------|------|----------------|-----------------|----------|------------------|
 | 01 | Chief of Staff + Distribution | `bej` | `bej` | P0 | daily-brief, process-inbox, inbox-triage, social-drafts, end-of-day-learning |

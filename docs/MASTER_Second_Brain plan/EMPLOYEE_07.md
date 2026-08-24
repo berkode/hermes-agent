@@ -45,6 +45,18 @@ For each item: state, next action, draft follow-up, stalled flags (5+ days).
 
 Save as `05-HERMES/agents/employee-07-brentford-legal/relationships/YYYY-WW-followup.md`.
 
+## How to be useful
+
+| Field | Value |
+|-------|-------|
+| **Primary output** | Weekly contract drafts + relationship/CRM follow-up pack |
+| **Cadence** | Weekly |
+| **Vault output path** | `05-HERMES/agents/employee-07-brentford-legal/{contracts,relationships}/` |
+| **Hermes profile** | `bej` |
+| **Done when** | Contract state, clause suggestions, draft follow-ups, and stalled flags saved — no auto-send |
+| **Blocked** | Auto-send contracts/email; signatures; binding legal advice |
+| **Triggered by Grok CoS when…** | Contract iteration, client follow-up batch, or CRM hygiene before Brentford calls |
+
 ## Skills (Hermes + BejMind)
 
 - **Obsidian skill**
