@@ -854,14 +854,4 @@ export interface Translations {
     commentHint?: string;
     commentHintTitle?: string;
   };
-
-  services: {
-    subtitle: string;
-    manualNote: string;
-    startLlm: string;
-    startAll: string;
-    stopAll: string;
-    up: string;
-    down: string;
-  };
 }
