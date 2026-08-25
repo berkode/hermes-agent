@@ -4907,6 +4907,26 @@ def test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_thread
     _configure_immediate_prompt_run(
         monkeypatch, tmp_path, immediate_threads=False
     )
+    # Park leftover daemon pollers on a sink *before* isolating this test's
+    # queue. session.init tests in this module start _notification_poller_loop
+    # threads that look up process_registry.completion_queue each iteration;
+    # if they are still live when we swap the queue, their shutdown drain
+    # consumes batch_2/batch_3 and this assertion sees an empty set.
+    _sink: _queue_mod.Queue = _queue_mod.Queue()
+    monkeypatch.setattr(process_registry, "completion_queue", _sink)
+    leaked_pollers = [
+        thread
+        for thread in threading.enumerate()
+        if getattr(thread, "_target", None) is server._notification_poller_loop
+    ]
+    for leftover in list(server._sessions.values()):
+        stop = leftover.get("_notif_stop")
+        if isinstance(stop, threading.Event):
+            stop.set()
+        leftover["_finalized"] = True
+    for thread in leaked_pollers:
+        thread.join(timeout=2)
+
     real_thread_class = threading.Thread
     threads = []
     nested_started = threading.Event()
@@ -4954,8 +4974,9 @@ def test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_thread
         server._run_prompt_submit("rid-a", "sid_a", session, "session-a-turn")
 
         assert nested_started.wait(timeout=5)
-        threads[0].join(timeout=5)
-        assert not threads[0].is_alive()
+        user_thread = session.get("_run_thread") or threads[0]
+        user_thread.join(timeout=5)
+        assert not user_thread.is_alive()
         # Membership, not order: the completion_queue is process-global, and
         # notification pollers leaked by earlier session.init tests in this
         # file legitimately steal-and-requeue foreign-session events (see
@@ -4966,16 +4987,16 @@ def test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_thread
         # mid-cycle) and assert exactly {batch_2, batch_3} come back.
         queued: dict = {}
         deadline = time.time() + 5.0
-        while time.time() < deadline and set(queued) != {
-            "proc_batch_2",
-            "proc_batch_3",
-        }:
+        wanted = {"proc_batch_2", "proc_batch_3"}
+        while time.time() < deadline and set(queued) != wanted:
             try:
                 evt = isolated_queue.get(timeout=0.1)
             except _queue_mod.Empty:
                 continue
-            queued[evt["session_id"]] = evt
-        assert set(queued) == {"proc_batch_2", "proc_batch_3"}
+            session_id = evt.get("session_id")
+            if session_id in wanted:
+                queued[session_id] = evt
+        assert set(queued) == wanted
     finally:
         release_nested.set()
         for thread in threads:
