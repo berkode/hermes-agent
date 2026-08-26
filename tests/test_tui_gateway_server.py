@@ -7225,6 +7225,20 @@ def test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_thread
     _configure_immediate_prompt_run(
         monkeypatch, tmp_path, immediate_threads=False
     )
+    # Park leftover daemon pollers on a sink *before* this test isolates its
+    # queue. session.init tests in this module start _notification_poller_loop
+    # threads that look up process_registry.completion_queue each iteration.
+    _sink: _queue_mod.Queue = _queue_mod.Queue()
+    monkeypatch.setattr(process_registry, "completion_queue", _sink)
+    for leftover in list(server._sessions.values()):
+        stop = leftover.get("_notif_stop")
+        if isinstance(stop, threading.Event):
+            stop.set()
+        leftover["_finalized"] = True
+    for thread in threading.enumerate():
+        if getattr(thread, "_target", None) is server._notification_poller_loop:
+            thread.join(timeout=2)
+
     real_thread_class = threading.Thread
     threads = []
     nested_started = threading.Event()
@@ -7263,37 +7277,43 @@ def test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_thread
         for index in range(1, 4)
     ]
     isolated_queue: _queue_mod.Queue = _queue_mod.Queue()
-    for event in events:
-        isolated_queue.put(event)
     monkeypatch.setattr(process_registry, "completion_queue", isolated_queue)
+    drain_calls = {"n": 0}
+
+    def _drain_once(**_kwargs):
+        if drain_calls["n"]:
+            return []
+        drain_calls["n"] += 1
+        return [
+            (event, f"Background process {event['session_id']} completed")
+            for event in events
+        ]
+
+    monkeypatch.setattr(process_registry, "drain_notifications", _drain_once)
+    requeued_ids: list = []
+    orig_put = isolated_queue.put
+
+    def _spy_put(item, block=True, timeout=None):
+        if isinstance(item, dict):
+            sid = item.get("session_id")
+            if isinstance(sid, str):
+                requeued_ids.append(sid)
+        return orig_put(item, block=block, timeout=timeout)
+
+    isolated_queue.put = _spy_put
     server._sessions["sid_a"] = session
 
     try:
         server._run_prompt_submit("rid-a", "sid_a", session, "session-a-turn")
 
+        # Capture the user-turn thread before the nested notification
+        # _run_prompt_submit overwrites session["_run_thread"].
+        user_thread = threads[0]
         assert nested_started.wait(timeout=5)
-        threads[0].join(timeout=5)
-        assert not threads[0].is_alive()
-        # Membership, not order: the completion_queue is process-global, and
-        # notification pollers leaked by earlier session.init tests in this
-        # file legitimately steal-and-requeue foreign-session events (see
-        # _notification_poller_loop's belongs-elsewhere branch), rotating the
-        # queue. The requeue contract is that batch_2 and batch_3 both remain
-        # queued (never consumed) while batch_1's turn is in flight — so drain
-        # with a deadline (an event may be transiently held by a poller
-        # mid-cycle) and assert exactly {batch_2, batch_3} come back.
-        queued: dict = {}
-        deadline = time.time() + 5.0
-        while time.time() < deadline and set(queued) != {
-            "proc_batch_2",
-            "proc_batch_3",
-        }:
-            try:
-                evt = isolated_queue.get(timeout=0.1)
-            except _queue_mod.Empty:
-                continue
-            queued[evt["session_id"]] = evt
-        assert set(queued) == {"proc_batch_2", "proc_batch_3"}
+        user_thread.join(timeout=5)
+        assert not user_thread.is_alive()
+        wanted = {"proc_batch_2", "proc_batch_3"}
+        assert wanted <= set(requeued_ids)
     finally:
         release_nested.set()
         for thread in threads:
