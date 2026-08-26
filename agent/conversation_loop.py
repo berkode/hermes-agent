@@ -736,6 +736,10 @@ def _billing_or_entitlement_message(
     ]
     if billing_url:
         lines.append(f"{provider_label} billing: {billing_url}")
+    lines.append(
+        "Or rotate automatically: configure a local fallback "
+        "(`hermes fallback add`) — e.g. ollama/gemma3:1b — then retry."
+    )
     lines.append("You can switch providers temporarily with /model <model> --provider <provider>.")
     return "\n".join(lines)
 
@@ -5511,6 +5515,12 @@ def run_conversation(
                             _retry.primary_recovery_attempted = False
                             _retry.restart_with_rebuilt_messages = True
                             break
+                        if classified.reason == FailoverReason.billing:
+                            agent._buffer_status(
+                                "⚠️ No fallback provider configured — "
+                                "run `hermes fallback add` (e.g. ollama gemma3:1b) "
+                                "so credits/402 errors rotate automatically."
+                            )
 
                 # ── Auth-failure provider failover ───────────────────────
                 # A 401/403 that survives the per-provider credential-refresh
