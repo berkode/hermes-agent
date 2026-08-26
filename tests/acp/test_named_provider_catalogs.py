@@ -8,7 +8,7 @@ offer them — the TUI ``/model`` picker already renders these entries
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -204,6 +204,96 @@ class TestModelStateIncludesNamedProviders:
             not item.model_id.startswith(("ollama:", "custom:ollama:"))
             for item in resp.models.available_models
         )
+
+    @pytest.mark.asyncio
+    async def test_native_empty_ollama_slug_matches_custom_ollama_current(self):
+        """Bare ``ollama`` native_catalog_empty must apply after rewrite to custom:ollama."""
+        manager = SessionManager(
+            agent_factory=lambda: SimpleNamespace(
+                model="dead:tag",
+                provider="ollama",
+                base_url="http://127.0.0.1:11434/v1",
+            )
+        )
+        acp_agent = HermesACPAgent(session_manager=manager)
+        picker_context = MagicMock()
+        picker_context.with_overrides.return_value = picker_context
+        payload = {
+            "providers": [
+                {
+                    "slug": "ollama",
+                    "name": "Ollama",
+                    "api_url": "http://127.0.0.1:11434/v1",
+                    "native_catalog_empty": True,
+                    "models": ["dead:tag"],
+                }
+            ]
+        }
+
+        with (
+            patch("hermes_cli.inventory.load_picker_context", return_value=picker_context),
+            patch("hermes_cli.inventory.build_models_payload", return_value=payload),
+            patch(
+                "acp_adapter.server._named_custom_provider_catalogs",
+                return_value=[],
+            ),
+        ):
+            resp = await acp_agent.new_session(cwd="/tmp")
+
+        assert isinstance(resp.models, SessionModelState)
+        assert resp.models.current_model_id == ""
+        assert all(
+            not item.model_id.startswith(("ollama:", "custom:ollama:"))
+            for item in resp.models.available_models
+        )
+
+    @pytest.mark.asyncio
+    async def test_exception_after_empty_catalog_does_not_resurrect_current(self):
+        """Payload/encoding errors must not undo an authoritative-empty decision."""
+        manager = SessionManager(
+            agent_factory=lambda: SimpleNamespace(
+                model="dead:tag",
+                provider="ollama",
+                base_url="http://127.0.0.1:11434/v1",
+            )
+        )
+        acp_agent = HermesACPAgent(session_manager=manager)
+        picker_context = MagicMock()
+        picker_context.with_overrides.return_value = picker_context
+        payload = {
+            "providers": [
+                {
+                    "slug": "ollama",
+                    "name": "Ollama",
+                    "api_url": "http://127.0.0.1:11434/v1",
+                    "native_catalog_empty": True,
+                    "models": [],
+                }
+            ]
+        }
+        real_sms = SessionModelState
+        calls = {"n": 0}
+
+        def flaky_sms(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("simulated encoding failure after empty")
+            return real_sms(*args, **kwargs)
+
+        with (
+            patch("hermes_cli.inventory.load_picker_context", return_value=picker_context),
+            patch("hermes_cli.inventory.build_models_payload", return_value=payload),
+            patch(
+                "acp_adapter.server._named_custom_provider_catalogs",
+                return_value=[],
+            ),
+            patch("acp_adapter.server.SessionModelState", side_effect=flaky_sms),
+        ):
+            resp = await acp_agent.new_session(cwd="/tmp")
+
+        assert isinstance(resp.models, SessionModelState)
+        assert resp.models.current_model_id == ""
+        assert resp.models.available_models == []
 
     @pytest.mark.asyncio
     async def test_named_provider_models_appear_in_model_state(self):

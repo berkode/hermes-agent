@@ -38,7 +38,8 @@ jobs:
   detect:
     name: Detect affected areas
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    # Full checkout + compare-API retries need headroom; 1m timed out under load.
+    timeout-minutes: 5
     outputs:
       python: ${{ steps.classify.outputs.python }}
       python_prod: ${{ steps.classify.outputs.python_prod }}
@@ -57,12 +58,17 @@ jobs:
       event_name: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # sparse-checkout belongs on checkout — detect-changes only accepts
+          # github-token (ignored inputs previously caused a full clone).
+          sparse-checkout: |
+            .github/actions/detect-changes
+            scripts/ci
+          sparse-checkout-cone-mode: true
       - name: Detect affected areas
         id: classify
         uses: ./.github/actions/detect-changes
         with:
-          sparse-checkout: scripts/ci/classify_changes.py
-          sparse-checkout-cone-mode: false
           github-token: ${{ github.token }}
 
   # ─────────────────────────────────────────────────────────────────────
