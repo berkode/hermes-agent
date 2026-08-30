@@ -84,6 +84,7 @@ from agent.prompt_caching import (
     strip_anthropic_cache_control,
     strip_anthropic_tool_cache_control,
 )
+from agent.provider_projection import splice_provider_projection
 from agent.retry_utils import (
     adaptive_rate_limit_backoff,
     is_zai_coding_overload_error,
@@ -736,10 +737,6 @@ def _billing_or_entitlement_message(
     ]
     if billing_url:
         lines.append(f"{provider_label} billing: {billing_url}")
-    lines.append(
-        "Or rotate automatically: configure a local fallback "
-        "(`hermes fallback add`) — e.g. ollama/gemma3:1b — then retry."
-    )
     lines.append("You can switch providers temporarily with /model <model> --provider <provider>.")
     return "\n".join(lines)
 
@@ -3146,13 +3143,14 @@ def run_conversation(
                 # session instead of re-failing every retry.
                 if getattr(agent, "_disable_streaming", False):
                     _use_streaming = False
-                # CopilotACPClient communicates via subprocess stdio and
-                # returns a plain SimpleNamespace — not an iterable
-                # stream.  Mirror the ACP exclusion used for Responses
-                # API upgrade (lines ~1083-1085).
+                # An ACP client communicates via subprocess stdio and returns a
+                # plain SimpleNamespace — not an iterable stream.  Keyed on the
+                # `acp://` scheme rather than one vendor, so any ACP client is
+                # excluded.  Mirror the ACP exclusion used for Responses API
+                # upgrade (lines ~1083-1085).
                 elif (
                     agent.provider in {"copilot-acp"}
-                    or str(agent.base_url or "").lower().startswith("acp://copilot")
+                    or str(agent.base_url or "").lower().startswith("acp://")
                     or str(agent.base_url or "").lower().startswith("acp+tcp://")
                 ):
                     _use_streaming = False
@@ -5515,12 +5513,6 @@ def run_conversation(
                             _retry.primary_recovery_attempted = False
                             _retry.restart_with_rebuilt_messages = True
                             break
-                        if classified.reason == FailoverReason.billing:
-                            agent._buffer_status(
-                                "⚠️ No fallback provider configured — "
-                                "run `hermes fallback add` (e.g. ollama gemma3:1b) "
-                                "so credits/402 errors rotate automatically."
-                            )
 
                 # ── Auth-failure provider failover ───────────────────────
                 # A 401/403 that survives the per-provider credential-refresh
@@ -6790,6 +6782,15 @@ def run_conversation(
                     assistant_message.content = "\n".join(parts)
                 else:
                     assistant_message.content = str(raw)
+
+            # ── Agent-as-provider projection ──────────────────────────────
+            # A provider that IS an agent ran its own tools inside its own
+            # session before we got here: splice that work into the transcript
+            # as completed call/result rows and tick the skill-review nudge
+            # with the iterations Hermes never saw. Appended before this turn's
+            # assistant message, so the order reads call → result → answer.
+            # No-op for ordinary providers; see agent/provider_projection.py.
+            splice_provider_projection(agent, response, messages)
 
             try:
                 from hermes_cli.lifecycle import (
