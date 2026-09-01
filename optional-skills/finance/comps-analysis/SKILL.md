@@ -15,20 +15,23 @@ metadata:
 
 This skill assumes **headless openpyxl** — you are producing an .xlsx file on disk.
 Follow the `excel-author` skill's conventions for cell coloring, formulas, named ranges, and sensitivity tables.
-Recalculate before delivery: `python /path/to/excel-author/scripts/recalc.py ./out/model.xlsx`.
+Before delivery:
+- `python /path/to/excel-author/scripts/recalc.py ./out/model.xlsx` (LibreOffice)
+- `python /path/to/excel-author/scripts/to_html.py ./out/model.xlsx`
+- `python /path/to/excel-author/scripts/write_provenance.py ./out/model.xlsx --skill comps-analysis`
 
 # Comparable Company Analysis
 
 ## ⚠️ CRITICAL: Data Source Priority (READ FIRST)
 
-**ALWAYS follow this data source hierarchy:**
+**ALWAYS follow this data source hierarchy (Berkode / Hermes):**
 
-1. **FIRST: Check for MCP data sources** - If S&P Kensho MCP, FactSet MCP, or Daloopa MCP are available, use them exclusively for financial and trading information
-2. **DO NOT use web search** if the above MCP data sources are available
-3. **ONLY if MCPs are unavailable:** Then use Bloomberg Terminal, SEC EDGAR filings, or other institutional sources
-4. **NEVER use web search as a primary data source** - it lacks the accuracy, audit trails, and reliability required for institutional-grade analysis
+1. **Structured financial MCP** (if configured in `mcp_servers`) — FactSet, S&P Kensho, Daloopa, etc. Prefer exclusively when present.
+2. **Berkode research stack** — Dexter via agency `research.run` / BejResearch `:5007`, and FMP when `FMP_API_KEY` is set in BejMind.
+3. **Primary filings / IR** — SEC EDGAR (`web_extract` / `browser_navigate`), company IR pages, user-provided workpapers.
+4. **Generic web search** — last resort for public companies only; cite the URL; never invent numbers. Flag gaps as `[UNSOURCED]`.
 
-**Why this matters:** MCP sources provide verified, institutional-grade data with proper citations. Web search results can be outdated, inaccurate, or unreliable for financial analysis.
+**Do not** refuse the job when finance MCP is absent — use steps 2–3. **Do not** fabricate comps. Private-company / deal data must stay under `BEJMIND_PRIVACY_POSTURE=strict` (local models) unless the operator explicitly opts in.
 
 ---
 
@@ -630,6 +633,9 @@ Before delivering a comp analysis, verify:
 - [ ] Sanity checks pass (margins logical, multiples reasonable)
 - [ ] Date stamp is current ("As of [Date]")
 - [ ] Formula auditing shows no errors (#DIV/0!, #REF!, #N/A)
+- [ ] Ran `excel-author/scripts/recalc.py` (LibreOffice) until success
+- [ ] Emitted HTML preview via `excel-author/scripts/to_html.py`
+- [ ] Wrote provenance sidecar via `excel-author/scripts/write_provenance.py` (`*.xlsx.meta.json`)
 
 ---
 
@@ -645,17 +651,13 @@ After completing a comp analysis, ask:
 The best comp analyses evolve with each iteration. Save templates, learn from feedback, and refine the structure based on what decision-makers actually use.
 
 
-## Data sources — MCP first, web fallback
+## Data sources — MCP first, Berkode fallbacks
 
-Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes:
+Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes / BejCapital:
 
-- **If you have any structured financial-data MCP configured** (Hermes supports MCP — see `native-mcp` skill), prefer it for point-in-time comps, precedent transactions, and filings.
-- **Otherwise**, fall back to:
-  - `web_search` / `web_extract` against SEC EDGAR (`https://www.sec.gov/cgi-bin/browse-edgar`) for US filings
-  - Company IR pages for press releases, earnings decks
-  - `browser_navigate` for interactive data portals
-  - User-provided data (explicitly ask when the context doesn't have it)
-- **Never fabricate**. If a multiple, precedent, or filing number can't be sourced, flag the cell as `[UNSOURCED]` and surface it to the user.
+- Prefer structured finance MCP when configured (`native-mcp` skill).
+- Otherwise use Dexter (`research.run` / BejResearch), FMP (`FMP_API_KEY` via BejMind), SEC EDGAR, company IR, then user-provided data.
+- Generic web search is last resort for **public** tickers only; cite URLs; never fabricate. Flag gaps as `[UNSOURCED]`.
 
 ## Attribution
 
