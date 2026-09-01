@@ -737,6 +737,10 @@ class HermesACPAgent(acp.Agent):
         """
         model = str(state.model or getattr(state.agent, "model", "") or "").strip()
         provider = getattr(state.agent, "provider", None) or detect_provider() or "openrouter"
+        # Set before the try so an exception mid-build can still honor an
+        # authoritative-empty decision already made (do not resurrect a dead
+        # Ollama/native model via the single-model fallback).
+        current_is_empty = False
 
         try:
             from hermes_cli.inventory import build_models_payload, load_picker_context
@@ -884,20 +888,17 @@ class HermesACPAgent(acp.Agent):
                     seen_semantic_ids.add(named_semantic_id)
 
             def empty_catalog_applies(provider_id: str) -> bool:
-                raw = str(provider_id or "").strip().lower()
-                normalized = normalize_provider(raw)
-                if normalized == "custom":
-                    return any(
-                        candidate == raw
-                        or f"custom:{candidate}" == raw
-                        or (raw == "custom" and candidate == "custom")
-                        for candidate in named_empty_authoritative
-                    )
+                # Bare ``ollama`` and ``custom:ollama`` are the same identity
+                # (``normalize_provider("ollama")`` → ``custom``, while
+                # ``custom:ollama`` stays itself). Match via semantic_provider
+                # so an authoritative empty native row recorded as ``ollama``
+                # still applies when the current choice was rewritten to
+                # ``custom:ollama``.
+                target = semantic_provider(provider_id)
+                if not target:
+                    return False
                 return any(
-                    candidate == raw
-                    or candidate == f"custom:{normalized}"
-                    or candidate == f"custom:{raw}"
-                    or normalize_provider(candidate) == normalized
+                    semantic_provider(candidate) == target
                     for candidate in named_empty_authoritative
                 )
 
@@ -966,6 +967,11 @@ class HermesACPAgent(acp.Agent):
                 )
         except Exception:
             logger.debug("Could not build ACP model state", exc_info=True)
+
+        if current_is_empty:
+            # Authoritative empty catalog already decided — do not resurrect
+            # the dead current model after a later encoding/payload error.
+            return SessionModelState(available_models=[], current_model_id="")
 
         if not model:
             return None
