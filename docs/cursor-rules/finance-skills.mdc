@@ -13,3 +13,4 @@ globs:
 - Description ≤ 60 chars; reference native Hermes tools (`read_file`, `terminal`, `web_extract`) not bare shell utilities.
 - Do not add an in-tree `plugins/financial-services/` product plugin.
 - Modeling skills need a capable model floor; do not assume `gemma3:4b` can produce institutional DCFs.
+- CI re-kick 2026-09-08: empty docs noop to re-run cancelled Python/Rust/Windows/JS jobs for #8.
