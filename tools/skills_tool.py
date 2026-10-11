@@ -83,6 +83,7 @@ from hermes_cli.config import cfg_get
 from utils import env_var_enabled
 from agent.skill_utils import (
     EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS,
+    drop_flat_skill_shadows as _drop_flat_skill_shadows,
     is_skill_support_path as _is_skill_support_path,
 )
 
@@ -1365,6 +1366,9 @@ def skill_view(
             ]
             if project_candidates:
                 candidates = project_candidates
+
+        # A stub skills/<name>.md must not collide with <cat>/<name>/SKILL.md.
+        candidates = _drop_flat_skill_shadows(candidates)
 
         if len(candidates) > 1:
             paths = [str(smd) for _, smd in candidates]

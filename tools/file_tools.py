@@ -12,6 +12,7 @@ import threading
 from pathlib import Path, PurePosixPath
 
 from agent.file_safety import get_read_block_error
+from agent.skill_utils import flat_skill_shadow_write_error
 from tools.binary_extensions import (
     has_binary_extension,
     has_opaque_document_extension,
@@ -2231,6 +2232,15 @@ def _check_binary_document_write(filepath: str, task_id: str = "default") -> str
     return None
 
 
+def _check_flat_skill_shadow(filepath: str, task_id: str = "default") -> str | None:
+    """Refuse ``skills/<name>.md`` writes that would shadow a packaged skill."""
+    try:
+        resolved = Path(_resolve_path_for_task(filepath, task_id))
+        return flat_skill_shadow_write_error(resolved)
+    except Exception:
+        return None
+
+
 def write_file_tool(path: str, content: str, task_id: str = "default",
                     cross_profile: bool = False,
                     session_id: str | None = None) -> str:
@@ -2248,6 +2258,9 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
     binary_doc_err = _check_binary_document_write(path, task_id)
     if binary_doc_err:
         return tool_error(binary_doc_err)
+    shadow_err = _check_flat_skill_shadow(path, task_id)
+    if shadow_err:
+        return tool_error(shadow_err)
     protected_err = _check_protected_instruction_write([path], task_id)
     if protected_err:
         return tool_error(protected_err)
