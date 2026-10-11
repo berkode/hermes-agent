@@ -143,9 +143,9 @@ mkdir -p ~/.camofox-docker
 docker run -d \
   --name camofox-browser \
   --restart unless-stopped \
-  -p 9377:9377 \
-  -p 6080:6080 \
-  -p 5901:5900 \
+  -p 127.0.0.1:9377:9377 \
+  -p 127.0.0.1:6080:6080 \
+  -p 127.0.0.1:5901:5900 \
   -e CAMOFOX_PORT=9377 \
   -e ENABLE_VNC=1 \
   -e VNC_BIND=0.0.0.0 \
