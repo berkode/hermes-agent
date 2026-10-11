@@ -1,12 +1,15 @@
 """Tests for agent/skill_utils.py."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from agent.skill_utils import (
+    drop_flat_skill_shadows,
     extract_skill_config_vars,
     extract_skill_conditions,
+    flat_skill_shadow_write_error,
     get_disabled_skill_names,
     get_external_skills_dirs,
     is_excluded_skill_path,
@@ -381,4 +384,48 @@ class TestBOMToleranceSiblingSites:
         fm = _split_frontmatter("\ufeff---\nname: bp\n---\nbody")
         assert fm is not None
         assert fm.get("name") == "bp"
+
+
+class TestFlatSkillShadows:
+    def test_drop_flat_md_when_skill_md_exists(self, tmp_path):
+        packaged = tmp_path / "note-taking" / "obsidian" / "SKILL.md"
+        stub = tmp_path / "obsidian.md"
+        packaged.parent.mkdir(parents=True)
+        packaged.write_text("# packaged\n")
+        stub.write_text("# stub\n")
+        kept = drop_flat_skill_shadows(
+            [(None, stub), (packaged.parent, packaged)]
+        )
+        assert kept == [(packaged.parent, packaged)]
+
+    def test_keep_flat_md_when_no_skill_md(self, tmp_path):
+        stub = tmp_path / "custom.md"
+        stub.write_text("# stub\n")
+        kept = drop_flat_skill_shadows([(None, stub)])
+        assert kept == [(None, stub)]
+
+    def test_write_error_when_packaged_skill_exists(self, tmp_path):
+        skills = tmp_path / "skills"
+        packaged = skills / "note-taking" / "obsidian" / "SKILL.md"
+        packaged.parent.mkdir(parents=True)
+        packaged.write_text("# packaged\n")
+        target = skills / "obsidian.md"
+        err = flat_skill_shadow_write_error(target)
+        assert err is not None
+        assert "note-taking/obsidian/SKILL.md" in err
+        assert "obsidian.md" in err
+
+    def test_write_allowed_when_no_packaged_skill(self, tmp_path):
+        skills = tmp_path / "skills"
+        skills.mkdir()
+        assert flat_skill_shadow_write_error(skills / "custom.md") is None
+
+    def test_write_allowed_inside_skill_package(self, tmp_path):
+        skills = tmp_path / "skills"
+        packaged = skills / "note-taking" / "obsidian" / "SKILL.md"
+        packaged.parent.mkdir(parents=True)
+        packaged.write_text("# packaged\n")
+        nested = packaged.parent / "references" / "vault.md"
+        nested.parent.mkdir()
+        assert flat_skill_shadow_write_error(nested) is None
 

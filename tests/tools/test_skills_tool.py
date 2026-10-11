@@ -924,6 +924,53 @@ class TestSkillViewCollisionDetection:
         assert result["path"] == "creative/sketch/SKILL.md"
         assert "REAL SKETCH SKILL" in result["content"]
 
+    def test_flat_name_md_does_not_shadow_packaged_skill(self, tmp_path):
+        """A stub skills/obsidian.md must not hide note-taking/obsidian/SKILL.md.
+
+        Discovery lists only SKILL.md packages, but skill_view's legacy
+        ``<name>.md`` lookup treated the stub as a second candidate and
+        refused (or loaded the stub). Prefer the packaged skill.
+        """
+        local_dir = tmp_path / "local"
+        external_dir = tmp_path / "external"
+        local_dir.mkdir()
+        external_dir.mkdir()
+
+        _make_skill(
+            local_dir,
+            "obsidian",
+            category="note-taking",
+            body="PACKAGED OBSIDIAN SKILL",
+        )
+        (local_dir / "obsidian.md").write_text(
+            "# stub that shadowed the real obsidian skill\n"
+        )
+
+        p1, p2 = self._patch_dirs(local_dir, [external_dir])
+        with p1, p2:
+            raw = skill_view("obsidian")
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert result["path"] == "note-taking/obsidian/SKILL.md"
+        assert "PACKAGED OBSIDIAN SKILL" in result["content"]
+
+    def test_legacy_flat_md_still_loads_without_packaged_skill(self, tmp_path):
+        """A lone skills/<name>.md remains loadable when no SKILL.md exists."""
+        local_dir = tmp_path / "local"
+        external_dir = tmp_path / "external"
+        local_dir.mkdir()
+        external_dir.mkdir()
+        (local_dir / "custom-notes.md").write_text("# LEGACY FLAT SKILL\n")
+
+        p1, p2 = self._patch_dirs(local_dir, [external_dir])
+        with p1, p2:
+            raw = skill_view("custom-notes")
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert "LEGACY FLAT SKILL" in result["content"]
+
 
     def test_two_externals_same_name_also_refuse(self, tmp_path):
         """Collision detection is symmetric — two external dirs with

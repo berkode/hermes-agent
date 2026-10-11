@@ -149,6 +149,56 @@ def is_skill_support_path(path, *, root: Optional[Path] = None) -> bool:
     return False
 
 
+def drop_flat_skill_shadows(
+    candidates: List[Tuple[Optional[Path], Path]],
+) -> List[Tuple[Optional[Path], Path]]:
+    """Keep real SKILL.md packages when a legacy flat ``{name}.md`` also matches.
+
+    ``skills/obsidian.md`` is a valid legacy skill, but it must not collide with
+    or shadow ``note-taking/obsidian/SKILL.md``. Prefer the package whenever
+    one exists; leave a lone flat file loadable.
+    """
+    skill_md = [(sd, smd) for sd, smd in candidates if smd.name == "SKILL.md"]
+    if skill_md:
+        return skill_md
+    return list(candidates)
+
+
+def flat_skill_shadow_write_error(path: Path) -> Optional[str]:
+    """Refuse writing ``skills/<name>.md`` when ``<name>/SKILL.md`` already exists."""
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return None
+    if resolved.suffix.lower() != ".md" or resolved.name == "SKILL.md":
+        return None
+    if resolved.parent.name != "skills":
+        return None
+    name = resolved.stem
+    if not name:
+        return None
+    skills_root = resolved.parent
+    if not skills_root.is_dir():
+        return None
+    for skill_md in skills_root.rglob("SKILL.md"):
+        if any(part in EXCLUDED_SKILL_DIRS for part in skill_md.parts):
+            continue
+        if is_skill_support_path(skill_md, root=skills_root):
+            continue
+        if skill_md.parent.name != name:
+            continue
+        try:
+            rel = skill_md.relative_to(skills_root)
+        except ValueError:
+            rel = skill_md
+        return (
+            f"Refusing to write skills/{resolved.name}: a real skill named "
+            f"'{name}' already exists at {rel}. Edit that SKILL.md instead; "
+            f"a flat skills/{name}.md shadows the packaged skill."
+        )
+    return None
+
+
 # ── Lazy YAML loader ─────────────────────────────────────────────────────
 
 _yaml_load_fn = None
