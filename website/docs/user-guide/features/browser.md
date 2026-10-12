@@ -246,7 +246,7 @@ make up ARCH=x86_64
 make up VERSION=135.0.1 RELEASE=beta.24
 ```
 
-`make up` starts the default container immediately. If you want custom runtime settings such as a larger Node heap, VNC, or a persistent profile directory, build the image first and then run it yourself:
+`make up` starts the default container immediately. Upstream `make up` publishes the control API on all interfaces; recreate with `-p 127.0.0.1:9377:9377` so port 9377 is loopback-only. If you want custom runtime settings such as a larger Node heap, VNC, or a persistent profile directory, build the image first and then run it yourself:
 
 ```bash
 # Build the image without starting the default container
@@ -257,9 +257,9 @@ mkdir -p ~/.camofox-docker
 docker run -d \
   --name camofox-browser \
   --restart unless-stopped \
-  -p 9377:9377 \
-  -p 6080:6080 \
-  -p 5901:5900 \
+  -p 127.0.0.1:9377:9377 \
+  -p 127.0.0.1:6080:6080 \
+  -p 127.0.0.1:5901:5900 \
   -e CAMOFOX_PORT=9377 \
   -e ENABLE_VNC=1 \
   -e VNC_BIND=0.0.0.0 \
