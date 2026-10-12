@@ -1,14 +1,14 @@
 ---
-title: "Stocks — Stock quotes, history, search, compare, crypto via Yahoo"
+title: "Stocks — Live IB, TradingView, Hyperliquid, or Binance quotes"
 sidebar_label: "Stocks"
-description: "Stock quotes, history, search, compare, crypto via Yahoo"
+description: "Live IB, TradingView, Hyperliquid, or Binance quotes"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Stocks
 
-Stock quotes, history, search, compare, crypto via Yahoo.
+Live IB, TradingView, Hyperliquid, or Binance quotes.
 
 ## Skill metadata
 
@@ -16,7 +16,7 @@ Stock quotes, history, search, compare, crypto via Yahoo.
 |---|---|
 | Source | Optional — install with `hermes skills install official/finance/stocks` |
 | Path | `optional-skills/finance/stocks` |
-| Version | `0.1.0` |
+| Version | `0.2.0` |
 | Author | Mibay (Mibayy), Hermes Agent |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -31,23 +31,22 @@ The following is the complete skill definition that Hermes loads when this skill
 
 # Stocks Skill
 
-Read-only market data via Yahoo Finance. Five commands: `quote`, `search`,
-`history`, `compare`, `crypto`. Python stdlib only — no API key, no pip
-installs. Yahoo's endpoint is unofficial and may rate-limit or change.
+Read-only live quotes and daily bars. Unapproved delayed tapes are not
+sources. Equities go through the BejTrader IB `/scan` endpoint on
+loopback; crypto through Hyperliquid then Binance; TradingView is the
+scanner/search tape. No approved live source → refuse.
 
 ## When to Use
 
-- User asks for a current stock price (AAPL, TSLA, MSFT, ...)
-- User wants to look up a ticker by company name
-- User wants OHLCV history or performance over a date range
-- User wants to compare several tickers side by side
-- User asks for a crypto price (BTC, ETH, SOL, ...)
+- User asks for a current stock or crypto price
+- User wants OHLCV history or a side-by-side compare
+- User wants a ticker lookup by name (TradingView search)
 
 ## Prerequisites
 
-Python 3.8+ stdlib only. Optional: set `ALPHA_VANTAGE_KEY` to enrich
-`market_cap`, `pe_ratio`, and 52-week levels when Yahoo's crumb-protected
-fields come back null. Free key: https://www.alphavantage.co/support/#api-key
+Python 3 stdlib only. On the Oracle VM, BejTrader must be listening on
+`http://127.0.0.1:5001` for IB-backed equity/futures bars. Override with
+`BEJTRADER_URL` only when the host is loopback. Crypto does not need IB.
 
 ## How to Run
 
@@ -55,58 +54,59 @@ Invoke through the `terminal` tool. Once installed:
 
 ```
 SCRIPT=~/.hermes/skills/finance/stocks/scripts/stocks_client.py
-python3 $SCRIPT quote AAPL
+python $SCRIPT quote AAPL
 ```
 
-All output is JSON on stdout — pipe through `jq` if you want to slice it.
+All output is JSON on stdout.
 
 ## Quick Reference
 
 ```
-python3 $SCRIPT quote AAPL
-python3 $SCRIPT quote AAPL MSFT GOOGL TSLA
-python3 $SCRIPT search "Tesla"
-python3 $SCRIPT history NVDA --range 6mo
-python3 $SCRIPT compare AAPL MSFT GOOGL
-python3 $SCRIPT crypto BTC ETH SOL
+python $SCRIPT quote AAPL
+python $SCRIPT quote AAPL MSFT
+python $SCRIPT search Tesla
+python $SCRIPT history NVDA --range 6mo
+python $SCRIPT compare AAPL MSFT
+python $SCRIPT crypto BTC
 ```
 
 ## Commands
 
 ### `quote SYMBOL [SYMBOL2 ...]`
 
-Current price, change, change%, volume, 52-week high/low.
+Last live close, change, volume. IB `/scan` first for non-crypto; TV scanner
+if IB is down. Crypto uses Hyperliquid then Binance.
 
 ### `search QUERY`
 
-Find tickers by company name. Returns top 5: symbol, name, exchange, type.
+TradingView symbol search. Top 5 matches.
 
 ### `history SYMBOL [--range RANGE]`
 
-Daily OHLCV plus stats (min, max, avg, total return %). Ranges: `1mo`,
-`3mo`, `6mo`, `1y`, `5y`. Default: `1mo`.
+Daily OHLCV. Ranges: `1mo`, `3mo`, `6mo`, `1y`, `5y`. Default: `1mo`.
 
 ### `compare SYMBOL1 SYMBOL2 [...]`
 
-Side-by-side: price, change%, 52-week performance.
+Side-by-side live quotes.
 
-### `crypto SYMBOL [SYMBOL2 ...]`
+### `crypto SYMBOL`
 
-Crypto prices. Pass `BTC` (the script appends `-USD` automatically).
+Hyperliquid public candles, else Binance. Pass `BTC` (USD quote).
 
 ## Pitfalls
 
-- Yahoo Finance's API is unofficial. Endpoints can change or rate-limit
-  without notice — if requests start failing, that's why.
-- `market_cap` and `pe_ratio` may return null on `quote` when Yahoo's
-  crumb session isn't established. Set `ALPHA_VANTAGE_KEY` to backfill.
-- Add a small delay between bulk requests to avoid rate-limiting.
-- This is read-only — no order placement, no account integration.
+- Missing IB on loopback plus a failed TV/HL/Binance fetch prints
+  `{"error": "no approved live source"}` — there is no delayed fallback.
+- `BEJTRADER_URL` must stay loopback (`127.0.0.1` / `localhost`). Public
+  hosts are refused.
+- This is read-only — no order placement.
 
 ## Verification
 
 ```
-python3 ~/.hermes/skills/finance/stocks/scripts/stocks_client.py quote AAPL
+python ~/.hermes/skills/finance/stocks/scripts/stocks_client.py quote AAPL
 ```
 
-Returns a JSON object with `symbol: "AAPL"` and a numeric `price` field.
+On the VM with BejTrader up, JSON includes `symbol` and `price` and
+`data_source` of `ibkr`, `tradingview`, `hyperliquid`, or `binance`.
+Without a live tape the JSON `error` is `no approved live source`.

@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
+"""Live market-data CLI. Unapproved delayed tapes are not sources.
+
+Approved live sources only:
+- BejTrader IB OHLCV on loopback (default http://127.0.0.1:5001/scan)
+- TradingView public scanner / symbol search
+- Hyperliquid public /info (crypto)
+- Binance public REST (crypto)
+
+No approved live source → refuse with ``no approved live source``.
+Stdlib only.
 """
-stocks_client.py - Stock market data CLI tool for the Hermes Agent project.
-Zero external dependencies - Python stdlib only.
-"""
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -13,32 +22,77 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
-from http.cookiejar import CookieJar
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 USER_AGENT = "Mozilla/5.0 (compatible; HermesAgent/1.0)"
-YF_BASE = "https://query1.finance.yahoo.com"
-YF_BASE2 = "https://query2.finance.yahoo.com"
-AV_BASE = "https://www.alphavantage.co/query"
+HL_INFO = "https://api.hyperliquid.xyz/info"
+BINANCE_API = "https://api.binance.com"
+TV_SCANNER = "https://scanner.tradingview.com/symbol"
+TV_SEARCH = "https://symbol-search.tradingview.com/symbol_search/"
+DEFAULT_IB_URL = "http://127.0.0.1:5001"
+REFUSE = "no approved live source"
+
+_CRYPTO = frozenset(
+    {
+        "BTC",
+        "ETH",
+        "SOL",
+        "XRP",
+        "DOGE",
+        "AVAX",
+        "LINK",
+        "ADA",
+        "DOT",
+        "MATIC",
+        "ARB",
+        "OP",
+        "SUI",
+        "APT",
+        "LTC",
+        "BCH",
+        "ATOM",
+        "NEAR",
+        "INJ",
+        "TIA",
+    }
+)
+
+_APPROVED_HOSTS = frozenset(
+    {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+        "api.hyperliquid.xyz",
+        "api.binance.com",
+        "scanner.tradingview.com",
+        "symbol-search.tradingview.com",
+    }
+)
+
+_RANGE_BARS = {
+    "1mo": 32,
+    "3mo": 80,
+    "6mo": 140,
+    "1y": 270,
+    "5y": 1300,
+}
 
 MAX_RETRIES = 3
-BACKOFF_BASE = 1.5  # seconds
-
-# Global cookie jar + opener (handles Yahoo Finance session cookies)
-_cookie_jar = CookieJar()
-_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_cookie_jar))
-_crumb: str | None = None
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
+BACKOFF_BASE = 1.5
 
 
 def print_json(data: dict | list) -> None:
     print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def refuse(symbol: str | None = None, detail: str = "", tried: list[str] | None = None) -> dict:
+    payload: dict = {"error": REFUSE}
+    if symbol:
+        payload["symbol"] = symbol
+    if detail:
+        payload["detail"] = detail
+    if tried:
+        payload["tried"] = tried
+    return payload
 
 
 def fmt_price(value) -> str | None:
@@ -51,7 +105,6 @@ def fmt_price(value) -> str | None:
 
 
 def fmt_large(value) -> str | None:
-    """Format large numbers with B/T suffix."""
     if value is None:
         return None
     try:
@@ -76,659 +129,414 @@ def fmt_pct(value) -> str | None:
         return None
 
 
-def safe_get(d: dict, *keys, default=None):
-    """Safely traverse nested dict."""
-    cur = d
-    for k in keys:
-        if not isinstance(cur, dict):
-            return default
-        cur = cur.get(k, default)
-        if cur is None:
-            return default
-    return cur
-
-
 def ts_to_date(ts) -> str | None:
-    """Convert Unix timestamp to ISO date string."""
     if ts is None:
         return None
     try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+        if isinstance(ts, str) and "T" in ts:
+            return ts[:10]
+        raw = float(ts)
+        if raw > 1e12:
+            raw /= 1000.0
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc).strftime("%Y-%m-%d")
     except (OSError, ValueError, TypeError):
         return None
 
 
-# ---------------------------------------------------------------------------
-# HTTP layer with retry + exponential backoff
-# ---------------------------------------------------------------------------
+def is_approved_live_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host not in _APPROVED_HOSTS:
+        return False
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return True
+    return parsed.scheme == "https"
 
 
-def _build_request(url: str, headers: dict | None = None) -> urllib.request.Request:
-    req = urllib.request.Request(url)
-    req.add_header("User-Agent", USER_AGENT)
-    req.add_header("Accept", "application/json, */*")
-    req.add_header("Accept-Language", "en-US,en;q=0.9")
-    if headers:
-        for k, v in headers.items():
-            req.add_header(k, v)
+def crypto_coin(symbol: str) -> str | None:
+    sym = (symbol or "").upper().strip()
+    for suffix in ("-USD-PERP", "-USD", "USDT", "USDC", "USD", "-PERP"):
+        if sym.endswith(suffix) and len(sym) > len(suffix):
+            sym = sym[: -len(suffix)]
+            break
+    return sym if sym in _CRYPTO else None
+
+
+def ib_base_url() -> str:
+    raw = (os.environ.get("BEJTRADER_URL") or os.environ.get("BEJMIND_IB_URL") or DEFAULT_IB_URL).strip()
+    return raw.rstrip("/")
+
+
+def _build_request(url: str, payload: dict | list | None = None) -> urllib.request.Request:
+    if not is_approved_live_url(url):
+        raise PermissionError(f"{REFUSE}: blocked host {url}")
+    data = None
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
+    for key, value in headers.items():
+        req.add_header(key, value)
     return req
 
 
-def fetch_url(url: str, headers: dict | None = None, retries: int = MAX_RETRIES) -> dict | list | None:
-    """Fetch a URL, parse JSON, retry on transient errors."""
+def fetch_json(url: str, payload: dict | list | None = None, retries: int = MAX_RETRIES) -> dict | list | None:
     last_err = None
     for attempt in range(retries):
         try:
-            req = _build_request(url, headers)
-            with _opener.open(req, timeout=15) as resp:
+            req = _build_request(url, payload)
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 raw = resp.read()
                 return json.loads(raw.decode("utf-8", errors="replace"))
-        except urllib.error.HTTPError as e:
-            last_err = e
-            if e.code in {404, 400}:
-                break  # no point retrying
-            wait = BACKOFF_BASE ** attempt
-            time.sleep(wait)
-        except urllib.error.URLError as e:
-            last_err = e
-            wait = BACKOFF_BASE ** attempt
-            time.sleep(wait)
-        except json.JSONDecodeError as e:
-            last_err = e
-            break
+        except PermissionError:
+            return None
+        except urllib.error.HTTPError as exc:
+            last_err = exc
+            if exc.code in {400, 404, 422}:
+                break
+            time.sleep(BACKOFF_BASE ** attempt)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            last_err = exc
+            time.sleep(BACKOFF_BASE ** attempt)
+    del last_err
     return None
 
 
-# ---------------------------------------------------------------------------
-# Yahoo Finance crumb / cookie management
-# ---------------------------------------------------------------------------
-
-
-def _fetch_crumb() -> str | None:
-    """
-    Yahoo Finance v8 requires a crumb + consent cookie.
-    We hit the consent page once to grab cookies, then fetch the crumb.
-    """
-    global _crumb
-    if _crumb is not None:
-        return _crumb
-
-    # Step 1: touch Yahoo Finance to get cookies
+def _bar(ts, open_, high, low, close, volume) -> dict | None:
     try:
-        req = _build_request("https://finance.yahoo.com/")
-        with _opener.open(req, timeout=10) as resp:
-            resp.read()
-    except Exception:
-        pass
-
-    # Step 2: fetch crumb
-    crumb_url = f"{YF_BASE}/v1/test/getcrumb"
-    try:
-        req = _build_request(crumb_url)
-        with _opener.open(req, timeout=10) as resp:
-            crumb_raw = resp.read().decode("utf-8").strip()
-            if crumb_raw and crumb_raw != "":
-                _crumb = crumb_raw
-                return _crumb
-    except Exception:
-        pass
-
-    return None
-
-
-def yf_url(path: str, params: dict | None = None) -> str:
-    """Build a Yahoo Finance URL, injecting crumb if available."""
-    crumb = _fetch_crumb()
-    if params is None:
-        params = {}
-    if crumb:
-        params["crumb"] = crumb
-    qs = urllib.parse.urlencode(params)
-    base = f"{YF_BASE}{path}"
-    return f"{base}?{qs}" if qs else base
-
-
-# ---------------------------------------------------------------------------
-# Yahoo Finance API calls
-# ---------------------------------------------------------------------------
-
-
-def yf_chart(symbol: str, interval: str = "1d", range_: str = "1d") -> dict | None:
-    params = {"interval": interval, "range": range_}
-    crumb = _fetch_crumb()
-    if crumb:
-        params["crumb"] = crumb
-    qs = urllib.parse.urlencode(params)
-    url = f"{YF_BASE}/v8/finance/chart/{urllib.parse.quote(symbol)}?{qs}"
-    data = fetch_url(url)
-    if data is None:
-        # fallback to query2
-        url2 = f"{YF_BASE2}/v8/finance/chart/{urllib.parse.quote(symbol)}?{qs}"
-        data = fetch_url(url2)
-    return data
-
-
-def yf_search(query: str, count: int = 5) -> dict | None:
-    params = {"q": query, "quotesCount": count, "newsCount": 0}
-    crumb = _fetch_crumb()
-    if crumb:
-        params["crumb"] = crumb
-    qs = urllib.parse.urlencode(params)
-    url = f"{YF_BASE}/v1/finance/search?{qs}"
-    data = fetch_url(url)
-    if data is None:
-        url2 = f"{YF_BASE2}/v1/finance/search?{qs}"
-        data = fetch_url(url2)
-    return data
-
-
-def yf_quote_summary(symbol: str) -> dict | None:
-    """Fetch detailed quote summary (quoteSummary) for PE, market cap, etc."""
-    modules = "summaryDetail,defaultKeyStatistics,price"
-    params = {"modules": modules}
-    crumb = _fetch_crumb()
-    if crumb:
-        params["crumb"] = crumb
-    qs = urllib.parse.urlencode(params)
-    url = f"{YF_BASE}/v11/finance/quoteSummary/{urllib.parse.quote(symbol)}?{qs}"
-    data = fetch_url(url)
-    if data is None:
-        url2 = f"{YF_BASE2}/v11/finance/quoteSummary/{urllib.parse.quote(symbol)}?{qs}"
-        data = fetch_url(url2)
-    return data
-
-
-# ---------------------------------------------------------------------------
-# Alpha Vantage (optional, requires API key)
-# ---------------------------------------------------------------------------
-
-
-def av_overview(symbol: str) -> dict | None:
-    key = os.environ.get("ALPHA_VANTAGE_KEY")
-    if not key:
+        ohlc = [float(open_), float(high), float(low), float(close)]
+    except (TypeError, ValueError):
         return None
-    params = {"function": "OVERVIEW", "symbol": symbol, "apikey": key}
-    qs = urllib.parse.urlencode(params)
-    url = f"{AV_BASE}?{qs}"
-    data = fetch_url(url)
-    if isinstance(data, dict) and data.get("Symbol"):
-        return data
+    if any(v != v for v in ohlc):  # NaN
+        return None
+    try:
+        vol = float(volume or 0)
+    except (TypeError, ValueError):
+        vol = 0.0
+    return {
+        "timestamp": ts,
+        "open": ohlc[0],
+        "high": ohlc[1],
+        "low": ohlc[2],
+        "close": ohlc[3],
+        "volume": vol,
+    }
+
+
+def fetch_ib_ohlcv(symbol: str, timeframe: str, limit: int) -> tuple[list[dict], str | None]:
+    base = ib_base_url()
+    url = f"{base}/scan"
+    if not is_approved_live_url(url):
+        return [], "ib_not_loopback"
+    payload = {"ticker": symbol, "timeframe": timeframe, "lookback_bars": int(limit)}
+    data = fetch_json(url, payload=payload)
+    if not isinstance(data, dict):
+        return [], "ib_unavailable"
+    rows = data.get("ohlcv")
+    if not isinstance(rows, list) or not rows:
+        return [], "ib_empty"
+    bars: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        bar = _bar(
+            row.get("timestamp"),
+            row.get("open"),
+            row.get("high"),
+            row.get("low"),
+            row.get("close"),
+            row.get("volume"),
+        )
+        if bar:
+            bars.append(bar)
+    return bars, "ibkr" if bars else "ib_empty"
+
+
+def fetch_hl_ohlcv(coin: str, interval: str, limit: int) -> tuple[list[dict], str | None]:
+    seconds = {"1m": 60, "1h": 3600, "1d": 86400}.get(interval, 86400)
+    end_ms = int(time.time() * 1000)
+    start_ms = end_ms - (limit + 2) * seconds * 1000
+    payload = {
+        "type": "candleSnapshot",
+        "req": {"coin": coin, "interval": interval, "startTime": start_ms, "endTime": end_ms},
+    }
+    data = fetch_json(HL_INFO, payload=payload)
+    if not isinstance(data, list) or not data:
+        return [], "hyperliquid_empty"
+    bars: list[dict] = []
+    for candle in data:
+        if not isinstance(candle, dict):
+            continue
+        bar = _bar(candle.get("t"), candle.get("o"), candle.get("h"), candle.get("l"), candle.get("c"), candle.get("v"))
+        if bar:
+            bars.append(bar)
+    return bars[-limit:], "hyperliquid" if bars else "hyperliquid_empty"
+
+
+def fetch_binance_ohlcv(symbol: str, vs: str, interval: str, limit: int) -> tuple[list[dict], str | None]:
+    pair = f"{symbol.upper()}{vs.upper()}"
+    qs = urllib.parse.urlencode({"symbol": pair, "interval": interval, "limit": int(limit)})
+    url = f"{BINANCE_API}/api/v3/klines?{qs}"
+    data = fetch_json(url)
+    if not isinstance(data, list) or not data:
+        return [], "binance_empty"
+    bars: list[dict] = []
+    for row in data:
+        if not isinstance(row, list) or len(row) < 6:
+            continue
+        bar = _bar(row[0], row[1], row[2], row[3], row[4], row[5])
+        if bar:
+            bars.append(bar)
+    return bars, "binance" if bars else "binance_empty"
+
+
+def fetch_tv_quote(symbol: str) -> dict | None:
+    fields = "close,change,change_percent,volume,high,low,price_52_week_high,price_52_week_low,description"
+    candidates = [symbol]
+    if ":" not in symbol:
+        candidates.extend([f"NASDAQ:{symbol}", f"NYSE:{symbol}", f"AMEX:{symbol}", f"CBOE:{symbol}"])
+    for ticker in candidates:
+        qs = urllib.parse.urlencode({"symbol": ticker, "fields": fields})
+        data = fetch_json(f"{TV_SCANNER}?{qs}")
+        if not isinstance(data, dict):
+            continue
+        close = data.get("close")
+        if close is None:
+            continue
+        return {
+            "symbol": symbol.upper(),
+            "price": fmt_price(close),
+            "change": fmt_price(data.get("change")),
+            "change_pct": fmt_pct(data.get("change_percent")),
+            "volume": data.get("volume"),
+            "52w_high": fmt_price(data.get("price_52_week_high")),
+            "52w_low": fmt_price(data.get("price_52_week_low")),
+            "short_name": data.get("description"),
+            "data_source": "tradingview",
+        }
     return None
 
 
-# ---------------------------------------------------------------------------
-# Data extraction helpers
-# ---------------------------------------------------------------------------
-
-
-def extract_quote_from_chart(symbol: str, chart_data: dict) -> dict:
-    """Extract current quote info from v8 chart response."""
-    result = {
-        "symbol": symbol.upper(),
-        "price": None,
-        "change": None,
-        "change_pct": None,
-        "volume": None,
-        "market_cap": None,
-        "pe_ratio": None,
-        "52w_high": None,
-        "52w_low": None,
-        "currency": None,
-        "exchange": None,
-        "short_name": None,
-    }
-
-    chart = safe_get(chart_data, "chart", "result")
-    if not chart or not isinstance(chart, list) or len(chart) == 0:
-        return result
-
-    r = chart[0]
-    meta = r.get("meta", {})
-
-    result["currency"] = meta.get("currency")
-    result["exchange"] = meta.get("exchangeName")
-    result["short_name"] = meta.get("shortName") or meta.get("longName")
-
-    # Price
-    price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
-    result["price"] = fmt_price(price)
-
-    # Change
-    prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
-    if price and prev_close:
-        chg = float(price) - float(prev_close)
-        chg_pct = (chg / float(prev_close)) * 100
-        result["change"] = fmt_price(chg)
-        result["change_pct"] = fmt_pct(chg_pct)
-
-    result["volume"] = meta.get("regularMarketVolume")
-    result["52w_high"] = fmt_price(meta.get("fiftyTwoWeekHigh"))
-    result["52w_low"] = fmt_price(meta.get("fiftyTwoWeekLow"))
-
-    return result
-
-
-def extract_quote_summary_fields(qs_data: dict) -> dict:
-    """Extract PE, market cap, etc. from quoteSummary response."""
-    out = {
-        "market_cap": None,
-        "pe_ratio": None,
-        "52w_high": None,
-        "52w_low": None,
-        "volume": None,
-        "short_name": None,
-    }
-
-    result = safe_get(qs_data, "quoteSummary", "result")
-    if not result or not isinstance(result, list) or len(result) == 0:
-        return out
-
-    r = result[0]
-
-    # price module
-    price_mod = r.get("price", {})
-    out["market_cap"] = fmt_large(safe_get(price_mod, "marketCap", "raw"))
-    out["short_name"] = price_mod.get("shortName") or price_mod.get("longName")
-
-    # summaryDetail
-    sd = r.get("summaryDetail", {})
-    pe_raw = safe_get(sd, "trailingPE", "raw")
-    out["pe_ratio"] = fmt_price(pe_raw) if pe_raw else None
-    out["52w_high"] = fmt_price(safe_get(sd, "fiftyTwoWeekHigh", "raw"))
-    out["52w_low"] = fmt_price(safe_get(sd, "fiftyTwoWeekLow", "raw"))
-    out["volume"] = safe_get(sd, "volume", "raw") or safe_get(sd, "regularMarketVolume", "raw")
-
-    # defaultKeyStatistics
-    ks = r.get("defaultKeyStatistics", {})
-    if out["pe_ratio"] is None:
-        pe_raw = safe_get(ks, "trailingEps", "raw")
-        # can't compute PE from EPS alone without price, skip
-
+def fetch_tv_search(query: str, count: int = 5) -> list[dict]:
+    qs = urllib.parse.urlencode({"text": query, "hl": 1, "lang": "en", "domain": "production"})
+    data = fetch_json(f"{TV_SEARCH}?{qs}")
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for row in data[:count]:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            {
+                "symbol": row.get("symbol"),
+                "name": row.get("description"),
+                "exchange": row.get("exchange"),
+                "type": row.get("type"),
+            }
+        )
     return out
 
 
-# ---------------------------------------------------------------------------
-# Command: quote
-# ---------------------------------------------------------------------------
+def bars_to_quote(symbol: str, bars: list[dict], source: str) -> dict:
+    last = bars[-1]
+    prev = bars[-2] if len(bars) >= 2 else None
+    price = last["close"]
+    change = None
+    change_pct = None
+    if prev and prev.get("close"):
+        change = price - float(prev["close"])
+        change_pct = (change / float(prev["close"])) * 100
+    highs = [b["high"] for b in bars]
+    lows = [b["low"] for b in bars]
+    return {
+        "symbol": symbol.upper(),
+        "price": fmt_price(price),
+        "change": fmt_price(change),
+        "change_pct": fmt_pct(change_pct),
+        "volume": last.get("volume"),
+        "52w_high": fmt_price(max(highs) if highs else None),
+        "52w_low": fmt_price(min(lows) if lows else None),
+        "data_source": source,
+    }
+
+
+def live_ohlcv(symbol: str, *, timeframe: str, limit: int, vs: str = "USD") -> tuple[list[dict], str | None, list[str]]:
+    tried: list[str] = []
+    coin = crypto_coin(symbol)
+    if coin is not None:
+        hl_interval = {"1d": "1d", "1h": "1h", "1m": "1m"}.get(timeframe, "1d")
+        bars, src = fetch_hl_ohlcv(coin, hl_interval, limit)
+        tried.append("hyperliquid")
+        if bars:
+            return bars, src, tried
+        bn_interval = {"1d": "1d", "1h": "1h", "1m": "1m"}.get(timeframe, "1d")
+        bars, src = fetch_binance_ohlcv(coin, vs, bn_interval, limit)
+        tried.append("binance")
+        if bars:
+            return bars, src, tried
+        return [], None, tried
+    bars, src = fetch_ib_ohlcv(symbol, timeframe, limit)
+    tried.append("ibkr")
+    if bars:
+        return bars, src, tried
+    return [], None, tried
 
 
 def cmd_quote(symbols: list[str]) -> None:
     results = []
-
-    for sym in symbols:
-        sym = sym.upper().strip()
-        entry = {"symbol": sym, "data_source": "Yahoo Finance"}
-
-        # Fetch chart for price data
-        chart_data = yf_chart(sym, interval="1d", range_="1d")
-        if chart_data:
-            q = extract_quote_from_chart(sym, chart_data)
-            entry.update(q)
-
-        # Fetch quoteSummary for enriched data
-        qs_data = yf_quote_summary(sym)
-        if qs_data:
-            qs_fields = extract_quote_summary_fields(qs_data)
-            # Prefer quoteSummary values if chart didn't have them
-            for field in ("market_cap", "pe_ratio", "52w_high", "52w_low", "volume", "short_name"):
-                if entry.get(field) is None and qs_fields.get(field) is not None:
-                    entry[field] = qs_fields[field]
-                elif field == "market_cap" and qs_fields.get(field) is not None:
-                    # Always prefer formatted market cap from quoteSummary
-                    entry[field] = qs_fields[field]
-
-        # Optionally enrich with Alpha Vantage
-        av_key = os.environ.get("ALPHA_VANTAGE_KEY")
-        if av_key:
-            av_data = av_overview(sym)
-            if av_data:
-                entry["data_source"] = "Yahoo Finance + Alpha Vantage"
-                if entry.get("pe_ratio") is None:
-                    pe = av_data.get("PERatio")
-                    entry["pe_ratio"] = pe if pe and pe != "None" and pe != "-" else None
-                if entry.get("market_cap") is None:
-                    mc = av_data.get("MarketCapitalization")
-                    entry["market_cap"] = fmt_large(mc)
-                if entry.get("52w_high") is None:
-                    entry["52w_high"] = av_data.get("52WeekHigh")
-                if entry.get("52w_low") is None:
-                    entry["52w_low"] = av_data.get("52WeekLow")
-
-        results.append(entry)
-
-    if len(results) == 1:
-        print_json(results[0])
-    else:
-        print_json(results)
-
-
-# ---------------------------------------------------------------------------
-# Command: search
-# ---------------------------------------------------------------------------
+    for raw in symbols:
+        sym = raw.upper().strip()
+        bars, source, tried = live_ohlcv(sym, timeframe="1d", limit=30)
+        if bars and source:
+            results.append(bars_to_quote(sym, bars, source))
+            continue
+        tv = fetch_tv_quote(sym)
+        tried.append("tradingview")
+        if tv:
+            results.append(tv)
+            continue
+        results.append(refuse(sym, detail="IB/TV/HL/Binance returned no live tape", tried=tried))
+    print_json(results[0] if len(results) == 1 else results)
 
 
 def cmd_search(query: str) -> None:
-    data = yf_search(query, count=5)
-    if not data:
-        print_json({"error": "Search failed or no results", "query": query, "data_source": "Yahoo Finance"})
+    matches = fetch_tv_search(query, count=5)
+    if not matches:
+        print_json(refuse(detail=f"TradingView search empty for {query!r}", tried=["tradingview"]))
         return
-
-    quotes = data.get("quotes") or []
-    if not quotes:
-        print_json({"error": "No matches found", "query": query, "data_source": "Yahoo Finance"})
-        return
-
-    results = []
-    for q in quotes[:5]:
-        results.append({
-            "symbol": q.get("symbol"),
-            "name": q.get("longname") or q.get("shortname"),
-            "exchange": q.get("exchange") or q.get("exchDisp"),
-            "type": q.get("quoteType"),
-            "sector": q.get("sector"),
-        })
-
-    output = {
-        "query": query,
-        "matches": results,
-        "data_source": "Yahoo Finance",
-    }
-    print_json(output)
-
-
-# ---------------------------------------------------------------------------
-# Command: history
-# ---------------------------------------------------------------------------
+    print_json({"query": query, "matches": matches, "data_source": "tradingview"})
 
 
 def cmd_history(symbol: str, range_: str = "1mo") -> None:
-    valid_ranges = ("1mo", "3mo", "6mo", "1y", "5y")
-    if range_ not in valid_ranges:
-        print_json({"error": f"Invalid range '{range_}'. Valid: {', '.join(valid_ranges)}"})
+    valid = tuple(_RANGE_BARS)
+    if range_ not in valid:
+        print_json({"error": f"Invalid range '{range_}'. Valid: {', '.join(valid)}"})
         return
-
     sym = symbol.upper().strip()
-    chart_data = yf_chart(sym, interval="1d", range_=range_)
-
-    if not chart_data:
-        print_json({"error": f"Failed to fetch history for {sym}", "data_source": "Yahoo Finance"})
+    bars, source, tried = live_ohlcv(sym, timeframe="1d", limit=_RANGE_BARS[range_])
+    if not bars or not source:
+        print_json(refuse(sym, detail="no live OHLCV", tried=tried))
         return
-
-    chart = safe_get(chart_data, "chart", "result")
-    if not chart or not isinstance(chart, list) or len(chart) == 0:
-        err = safe_get(chart_data, "chart", "error", "description") or "Unknown error"
-        print_json({"error": err, "symbol": sym, "data_source": "Yahoo Finance"})
-        return
-
-    r = chart[0]
-    timestamps = r.get("timestamp") or []
-    indicators = r.get("indicators", {})
-    quote_list = indicators.get("quote") or [{}]
-    ohlcv = quote_list[0] if quote_list else {}
-
-    opens = ohlcv.get("open") or []
-    closes = ohlcv.get("close") or []
-    highs = ohlcv.get("high") or []
-    lows = ohlcv.get("low") or []
-    volumes = ohlcv.get("volume") or []
-
     history = []
-    for i, ts in enumerate(timestamps):
-        def _v(lst, idx):
-            try:
-                val = lst[idx]
-                return round(val, 2) if val is not None else None
-            except IndexError:
-                return None
-
-        entry = {
-            "date": ts_to_date(ts),
-            "open": _v(opens, i),
-            "close": _v(closes, i),
-            "high": _v(highs, i),
-            "low": _v(lows, i),
-            "volume": _v(volumes, i),
+    for bar in bars:
+        history.append(
+            {
+                "date": ts_to_date(bar["timestamp"]),
+                "open": round(bar["open"], 2),
+                "close": round(bar["close"], 2),
+                "high": round(bar["high"], 2),
+                "low": round(bar["low"], 2),
+                "volume": bar.get("volume"),
+            }
+        )
+    closes = [row["close"] for row in history if row["close"] is not None]
+    stats: dict = {}
+    if closes:
+        stats["min"] = fmt_price(min(closes))
+        stats["max"] = fmt_price(max(closes))
+        stats["avg"] = fmt_price(sum(closes) / len(closes))
+        if len(closes) >= 2 and closes[0]:
+            stats["total_return_pct"] = fmt_pct(((closes[-1] - closes[0]) / closes[0]) * 100)
+    print_json(
+        {
+            "symbol": sym,
+            "range": range_,
+            "data_points": len(history),
+            "stats": stats,
+            "history": history,
+            "data_source": source,
         }
-        history.append(entry)
-
-    # Stats
-    valid_closes = [c["close"] for c in history if c["close"] is not None]
-    stats = {}
-    if valid_closes:
-        stats["min"] = fmt_price(min(valid_closes))
-        stats["max"] = fmt_price(max(valid_closes))
-        stats["avg"] = fmt_price(sum(valid_closes) / len(valid_closes))
-        if len(valid_closes) >= 2:
-            total_return = ((valid_closes[-1] - valid_closes[0]) / valid_closes[0]) * 100
-            stats["total_return_pct"] = fmt_pct(total_return)
-        else:
-            stats["total_return_pct"] = None
-
-    meta = r.get("meta", {})
-    output = {
-        "symbol": sym,
-        "range": range_,
-        "currency": meta.get("currency"),
-        "exchange": meta.get("exchangeName"),
-        "data_points": len(history),
-        "stats": stats,
-        "history": history,
-        "data_source": "Yahoo Finance",
-    }
-    print_json(output)
-
-
-# ---------------------------------------------------------------------------
-# Command: compare
-# ---------------------------------------------------------------------------
+    )
 
 
 def cmd_compare(symbols: list[str]) -> None:
     if len(symbols) < 2:
         print_json({"error": "compare requires at least 2 symbols"})
         return
-
-    comparisons = []
-
-    for sym in symbols:
-        sym = sym.upper().strip()
-        entry = {
-            "symbol": sym,
-            "name": None,
-            "price": None,
-            "change_pct": None,
-            "market_cap": None,
-            "pe_ratio": None,
-            "52w_high": None,
-            "52w_low": None,
-            "52w_performance_pct": None,
-        }
-
-        # Chart data
-        chart_data = yf_chart(sym, interval="1d", range_="1d")
-        if chart_data:
-            q = extract_quote_from_chart(sym, chart_data)
-            entry["name"] = q.get("short_name")
-            entry["price"] = q.get("price")
-            entry["change_pct"] = q.get("change_pct")
-            entry["52w_high"] = q.get("52w_high")
-            entry["52w_low"] = q.get("52w_low")
-
-        # quoteSummary for enrichment
-        qs_data = yf_quote_summary(sym)
-        if qs_data:
-            qs = extract_quote_summary_fields(qs_data)
-            if qs.get("market_cap"):
-                entry["market_cap"] = qs["market_cap"]
-            if qs.get("pe_ratio"):
-                entry["pe_ratio"] = qs["pe_ratio"]
-            if entry["52w_high"] is None and qs.get("52w_high"):
-                entry["52w_high"] = qs["52w_high"]
-            if entry["52w_low"] is None and qs.get("52w_low"):
-                entry["52w_low"] = qs["52w_low"]
-            if entry["name"] is None and qs.get("short_name"):
-                entry["name"] = qs["short_name"]
-
-        # 52w performance: (current - 52w_low) / (52w_high - 52w_low)
-        try:
-            price_f = float(entry["price"]) if entry["price"] else None
-            high_f = float(entry["52w_high"]) if entry["52w_high"] else None
-            low_f = float(entry["52w_low"]) if entry["52w_low"] else None
-            if price_f and low_f and price_f > 0 and low_f > 0:
-                perf = ((price_f - low_f) / low_f) * 100
-                entry["52w_performance_pct"] = fmt_pct(perf)
-        except (ValueError, TypeError, ZeroDivisionError):
-            pass
-
-        comparisons.append(entry)
-
-    output = {
-        "comparison": comparisons,
-        "symbols": [s.upper() for s in symbols],
-        "data_source": "Yahoo Finance",
-    }
-    print_json(output)
-
-
-# ---------------------------------------------------------------------------
-# Command: crypto
-# ---------------------------------------------------------------------------
+    comparison = []
+    for raw in symbols:
+        sym = raw.upper().strip()
+        bars, source, tried = live_ohlcv(sym, timeframe="1d", limit=30)
+        if bars and source:
+            quote = bars_to_quote(sym, bars, source)
+        else:
+            quote = fetch_tv_quote(sym)
+            if quote is None:
+                comparison.append(refuse(sym, tried=tried + ["tradingview"]))
+                continue
+        comparison.append(
+            {
+                "symbol": quote["symbol"],
+                "price": quote.get("price"),
+                "change_pct": quote.get("change_pct"),
+                "52w_high": quote.get("52w_high"),
+                "52w_low": quote.get("52w_low"),
+                "data_source": quote.get("data_source"),
+            }
+        )
+    print_json({"comparison": comparison, "symbols": [s.upper() for s in symbols]})
 
 
 def cmd_crypto(symbol: str, vs: str = "USD") -> None:
-    sym = symbol.upper().strip()
-    vs = vs.upper().strip()
-
-    # If user already passed BTC-USD, keep as-is; otherwise append
-    if "-" not in sym:
-        ticker = f"{sym}-{vs}"
-    else:
-        ticker = sym
-
-    chart_data = yf_chart(ticker, interval="1d", range_="1d")
-
-    if not chart_data:
-        print_json({
-            "error": f"Failed to fetch crypto data for {ticker}",
-            "symbol": ticker,
-            "data_source": "Yahoo Finance",
-        })
+    coin = crypto_coin(symbol) or symbol.upper().strip()
+    bars, source, tried = live_ohlcv(coin, timeframe="1d", limit=5, vs=vs)
+    if not bars or not source:
+        print_json(refuse(coin, detail="crypto requires Hyperliquid or Binance", tried=tried))
         return
-
-    chart = safe_get(chart_data, "chart", "result")
-    if not chart or not isinstance(chart, list) or len(chart) == 0:
-        err = safe_get(chart_data, "chart", "error", "description") or "Symbol not found"
-        print_json({"error": err, "symbol": ticker, "data_source": "Yahoo Finance"})
-        return
-
-    r = chart[0]
-    meta = r.get("meta", {})
-
-    price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
-    prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
-
-    change = None
-    change_pct = None
-    if price and prev_close:
-        try:
-            chg = float(price) - float(prev_close)
-            chg_pct = (chg / float(prev_close)) * 100
-            change = fmt_price(chg)
-            change_pct = fmt_pct(chg_pct)
-        except (TypeError, ValueError, ZeroDivisionError):
-            pass
-
-    # 24h stats from indicators
-    indicators = r.get("indicators", {})
-    quote_list = indicators.get("quote") or [{}]
-    ohlcv = quote_list[0] if quote_list else {}
-    highs = [h for h in (ohlcv.get("high") or []) if h is not None]
-    lows = [l for l in (ohlcv.get("low") or []) if l is not None]
-    volumes = [v for v in (ohlcv.get("volume") or []) if v is not None]
-
-    output = {
-        "symbol": ticker,
-        "base": sym if "-" not in sym else sym.split("-")[0],
-        "quote_currency": vs,
-        "price": fmt_price(price),
-        "change": change,
-        "change_pct": change_pct,
-        "day_high": fmt_price(max(highs)) if highs else None,
-        "day_low": fmt_price(min(lows)) if lows else None,
-        "volume": fmt_large(sum(volumes)) if volumes else None,
-        "52w_high": fmt_price(meta.get("fiftyTwoWeekHigh")),
-        "52w_low": fmt_price(meta.get("fiftyTwoWeekLow")),
-        "exchange": meta.get("exchangeName"),
-        "short_name": meta.get("shortName") or meta.get("longName"),
-        "data_source": "Yahoo Finance",
-    }
-    print_json(output)
-
-
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+    quote = bars_to_quote(coin, bars, source)
+    quote["quote_currency"] = vs.upper()
+    print_json(quote)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stocks_client",
-        description="Stock & crypto market data CLI — Hermes Agent",
+        description="Live stock & crypto quotes — IB / TradingView / Hyperliquid / Binance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  stocks_client.py quote AAPL MSFT GOOGL
-  stocks_client.py search "Tesla"
+  stocks_client.py quote AAPL MSFT
+  stocks_client.py search Tesla
   stocks_client.py history AAPL --range 3mo
-  stocks_client.py compare AAPL MSFT GOOGL AMZN
+  stocks_client.py compare AAPL MSFT
   stocks_client.py crypto BTC
-  stocks_client.py crypto ETH --vs EUR
-  ALPHA_VANTAGE_KEY=yourkey stocks_client.py quote AAPL
+  BEJTRADER_URL=http://127.0.0.1:5001 stocks_client.py quote ES
         """,
     )
-
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # quote
-    p_quote = sub.add_parser("quote", help="Get current quote for one or more symbols")
-    p_quote.add_argument("symbols", nargs="+", metavar="SYMBOL", help="Stock ticker symbol(s)")
+    p_quote = sub.add_parser("quote", help="Live quote (IB, TV, HL, or Binance)")
+    p_quote.add_argument("symbols", nargs="+", metavar="SYMBOL")
 
-    # search
-    p_search = sub.add_parser("search", help="Search for stocks by name or symbol")
-    p_search.add_argument("query", help="Search query (company name or partial symbol)")
+    p_search = sub.add_parser("search", help="Ticker search via TradingView")
+    p_search.add_argument("query")
 
-    # history
-    p_history = sub.add_parser("history", help="Price history for a symbol")
-    p_history.add_argument("symbol", metavar="SYMBOL", help="Stock ticker symbol")
-    p_history.add_argument(
-        "--range",
-        dest="range_",
-        default="1mo",
-        choices=["1mo", "3mo", "6mo", "1y", "5y"],
-        help="Date range (default: 1mo)",
-    )
+    p_history = sub.add_parser("history", help="Daily OHLCV from an approved live source")
+    p_history.add_argument("symbol", metavar="SYMBOL")
+    p_history.add_argument("--range", dest="range_", default="1mo", choices=list(_RANGE_BARS))
 
-    # compare
-    p_compare = sub.add_parser("compare", help="Compare multiple stocks side by side")
-    p_compare.add_argument("symbols", nargs="+", metavar="SYMBOL", help="At least 2 stock symbols")
+    p_compare = sub.add_parser("compare", help="Side-by-side live quotes")
+    p_compare.add_argument("symbols", nargs="+", metavar="SYMBOL")
 
-    # crypto
-    p_crypto = sub.add_parser("crypto", help="Crypto price (BTC, ETH, SOL, etc.)")
-    p_crypto.add_argument("symbol", metavar="SYMBOL", help="Crypto symbol (e.g. BTC, ETH, SOL)")
-    p_crypto.add_argument(
-        "--vs",
-        default="USD",
-        metavar="CURRENCY",
-        help="Quote currency (default: USD)",
-    )
-
+    p_crypto = sub.add_parser("crypto", help="Crypto via Hyperliquid then Binance")
+    p_crypto.add_argument("symbol", metavar="SYMBOL")
+    p_crypto.add_argument("--vs", default="USD", metavar="CURRENCY")
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-
     try:
         if args.command == "quote":
             cmd_quote(args.symbols)
@@ -746,8 +554,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print_json({"error": "Interrupted by user"})
         sys.exit(130)
-    except Exception as e:
-        print_json({"error": f"Unexpected error: {e}", "type": type(e).__name__})
+    except Exception as exc:
+        print_json({"error": f"Unexpected error: {exc}", "type": type(exc).__name__})
         sys.exit(1)
 
 
