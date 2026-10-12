@@ -15,7 +15,10 @@ metadata:
 
 This skill assumes **headless openpyxl** — you are producing an .xlsx file on disk.
 Follow the `excel-author` skill's conventions for cell coloring, formulas, named ranges, and sensitivity tables.
-Recalculate before delivery: `python /path/to/excel-author/scripts/recalc.py ./out/model.xlsx`.
+Before delivery:
+- `python /path/to/excel-author/scripts/recalc.py ./out/model.xlsx` (LibreOffice)
+- `python /path/to/excel-author/scripts/to_html.py ./out/model.xlsx`
+- `python /path/to/excel-author/scripts/write_provenance.py ./out/model.xlsx --skill dcf-model`
 
 # DCF Model Builder
 
@@ -84,10 +87,12 @@ These constraints apply throughout all DCF model building. Review before startin
 
 Fetch data from MCP servers, user provided data, and the web.
 
-**Data Sources Priority:**
-1. **MCP Servers** (if configured) - Structured financial data from providers like Daloopa
-2. **User-Provided Data** - Historical financials from their research
-3. **Web Search/Fetch** - Current prices, beta, debt and cash when needed
+**Data Sources Priority (Berkode / Hermes):**
+1. **Structured finance MCP** (if configured) — Daloopa, FactSet, S&P Kensho, etc.
+2. **Berkode research stack** — Dexter via `research.run` / BejResearch, FMP when `FMP_API_KEY` is set
+3. **User-provided data** — historical financials from their research / workpapers
+4. **Filings / IR / market data** — SEC EDGAR, company IR, then web search/fetch for public prices/beta/debt/cash
+5. **Never fabricate** — flag gaps as `[UNSOURCED]`. Private deal data → `BEJMIND_PRIVACY_POSTURE=strict`
 
 **Validation Checklist:**
 - Verify net debt vs net cash (critical for valuation)
@@ -1239,7 +1244,9 @@ This approach centralizes scenario logic, making the model easier to audit and m
 Before delivering DCF model:
 
 **Required:**
-- Run `python recalc.py model.xlsx 30` until status is "success" (zero formula errors)
+- Run `python recalc.py model.xlsx 30` until status is "success" (zero formula errors; needs LibreOffice)
+- Emit HTML preview: `python to_html.py model.xlsx` (from `excel-author/scripts/`)
+- Write provenance sidecar: `python write_provenance.py model.xlsx --skill dcf-model --skill-version 1.0.0`
 - Two sheets: DCF (with sensitivity at bottom), WACC
 - Font colors: Blue=inputs, Black=formulas, Green=sheet links
 - Cell comments on ALL hardcoded inputs
@@ -1253,17 +1260,13 @@ Before delivering DCF model:
 - Tax rate 21-28%
 - File naming: `[Ticker]_DCF_Model_[Date].xlsx`
 
-## Data sources — MCP first, web fallback
+## Data sources — MCP first, Berkode fallbacks
 
-Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes:
+Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes / BejCapital:
 
-- **If you have any structured financial-data MCP configured** (Hermes supports MCP — see `native-mcp` skill), prefer it for point-in-time comps, precedent transactions, and filings.
-- **Otherwise**, fall back to:
-  - `web_search` / `web_extract` against SEC EDGAR (`https://www.sec.gov/cgi-bin/browse-edgar`) for US filings
-  - Company IR pages for press releases, earnings decks
-  - `browser_navigate` for interactive data portals
-  - User-provided data (explicitly ask when the context doesn't have it)
-- **Never fabricate**. If a multiple, precedent, or filing number can't be sourced, flag the cell as `[UNSOURCED]` and surface it to the user.
+- Prefer structured finance MCP when configured (`native-mcp` skill).
+- Otherwise use Dexter (`research.run` / BejResearch), FMP (`FMP_API_KEY` via BejMind), SEC EDGAR, company IR, then user-provided data.
+- Generic web search is last resort for **public** tickers only; cite URLs; never fabricate. Flag gaps as `[UNSOURCED]`.
 
 ## Attribution
 

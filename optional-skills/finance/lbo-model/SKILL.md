@@ -274,17 +274,13 @@ Must return success with zero errors.
 **This skill produces investment banking-quality LBO models by filling templates with correct formulas, proper formatting, and validated calculations. The skill adapts to any template structure while ensuring financial accuracy and professional presentation standards.**
 
 
-## Data sources — MCP first, web fallback
+## Data sources — MCP first, Berkode fallbacks
 
-Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes:
+Many passages below say "use the S&P Kensho MCP / Daloopa MCP / FactSet MCP". Those are commercial financial-data MCPs from the original Cowork plugin context. In Hermes / BejCapital:
 
-- **If you have any structured financial-data MCP configured** (Hermes supports MCP — see `native-mcp` skill), prefer it for point-in-time comps, precedent transactions, and filings.
-- **Otherwise**, fall back to:
-  - `web_search` / `web_extract` against SEC EDGAR (`https://www.sec.gov/cgi-bin/browse-edgar`) for US filings
-  - Company IR pages for press releases, earnings decks
-  - `browser_navigate` for interactive data portals
-  - User-provided data (explicitly ask when the context doesn't have it)
-- **Never fabricate**. If a multiple, precedent, or filing number can't be sourced, flag the cell as `[UNSOURCED]` and surface it to the user.
+- Prefer structured finance MCP when configured (`native-mcp` skill).
+- Otherwise use Dexter (`research.run` / BejResearch), FMP (`FMP_API_KEY` via BejMind), SEC EDGAR, company IR, then user-provided data.
+- Generic web search is last resort for **public** tickers only; cite URLs; never fabricate. Flag gaps as `[UNSOURCED]`.
 
 ## Attribution
 
