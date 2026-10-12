@@ -98,7 +98,7 @@ hermes skills uninstall <skill-name>
 | [**merger-model**](/user-guide/skills/optional/finance/finance-merger-model) | 在 Excel 中构建增厚/摊薄（并购）模型 — 合并后利润表、协同效应、融资结构、每股收益影响。与 excel-author 配合使用。适用于并购 pitch、董事会材料或交易评估。 |
 | [**polymarket**](/user-guide/skills/optional/finance/finance-polymarket) | 查询 Polymarket：市场、价格、订单簿、历史数据。 |
 | [**pptx-author**](/user-guide/skills/optional/finance/finance-pptx-author) | 使用 python-pptx 无头构建 PowerPoint 演示文稿。与 excel-author 配合，制作每个数字均可追溯至工作簿单元格的模型支撑型幻灯片。适用于 pitch deck、投委会备忘录、盈利说明。 |
-| [**stocks**](/user-guide/skills/optional/finance/finance-stocks) | 通过 Yahoo 获取股票报价、历史数据、搜索、对比及加密货币行情。 |
+| [**stocks**](/user-guide/skills/optional/finance/finance-stocks) | 通过 IB、TradingView、Hyperliquid 或 Binance 获取实时报价。 |
 
 ## health
 

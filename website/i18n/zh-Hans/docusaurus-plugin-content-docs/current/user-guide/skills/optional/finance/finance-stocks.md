@@ -1,14 +1,14 @@
 ---
-title: "Stocks — 通过 Yahoo 获取股票报价、历史、搜索、比较及加密货币数据"
+title: "Stocks — 通过 IB、TradingView、Hyperliquid 或 Binance 获取实时报价"
 sidebar_label: "Stocks"
-description: "通过 Yahoo 获取股票报价、历史、搜索、比较及加密货币数据"
+description: "通过 IB、TradingView、Hyperliquid 或 Binance 获取实时报价"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Stocks
 
-通过 Yahoo 获取股票报价、历史、搜索、比较及加密货币数据。
+通过 IB、TradingView、Hyperliquid 或 Binance 获取实时报价。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "通过 Yahoo 获取股票报价、历史、搜索、比较及加�
 |---|---|
 | 来源 | 可选 — 使用 `hermes skills install official/finance/stocks` 安装 |
 | 路径 | `optional-skills/finance/stocks` |
-| 版本 | `0.1.0` |
+| 版本 | `0.2.0` |
 | 作者 | Mibay (Mibayy), Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -31,21 +31,21 @@ description: "通过 Yahoo 获取股票报价、历史、搜索、比较及加�
 
 # Stocks Skill
 
-通过 Yahoo Finance 提供只读市场数据。五个命令：`quote`、`search`、
-`history`、`compare`、`crypto`。仅使用 Python 标准库——无需 API key，无需 pip
-安装。Yahoo 的接口为非官方接口，可能存在频率限制或发生变更。
+只读实时报价与日线。未批准的延迟行情不是数据源。股票通过 loopback 上的
+BejTrader IB `/scan`；加密货币先 Hyperliquid 再 Binance；TradingView 用于
+扫描与搜索。没有批准的实时源则拒绝。
 
 ## 使用场景
 
-- 用户询问当前股票价格（AAPL、TSLA、MSFT 等）
-- 用户希望通过公司名称查找股票代码
-- 用户需要 OHLCV 历史数据或某日期范围内的表现
-- 用户希望并排比较多个股票代码
-- 用户询问加密货币价格（BTC、ETH、SOL 等）
+- 用户询问当前股票或加密货币价格
+- 用户需要 OHLCV 历史或并排比较
+- 用户希望通过名称查找代码（TradingView 搜索）
 
 ## 前置条件
 
-仅需 Python 3.8+ 标准库。可选：设置 `ALPHA_VANTAGE_KEY` 以在 Yahoo 的 crumb 保护字段返回 null 时补充 `market_cap`、`pe_ratio` 及 52 周高低点数据。免费 key 申请：https://www.alphavantage.co/support/#api-key
+仅需 Python 3 标准库。Oracle VM 上 BejTrader 需监听
+`http://127.0.0.1:5001` 以提供 IB 股票/期货 K 线。仅在 loopback 上可用
+`BEJTRADER_URL` 覆盖。加密货币不需要 IB。
 
 ## 运行方式
 
@@ -53,56 +53,58 @@ description: "通过 Yahoo 获取股票报价、历史、搜索、比较及加�
 
 ```
 SCRIPT=~/.hermes/skills/finance/stocks/scripts/stocks_client.py
-python3 $SCRIPT quote AAPL
+python $SCRIPT quote AAPL
 ```
 
-所有输出均为 stdout 上的 JSON——如需切片处理，可通过管道传给 `jq`。
+所有输出均为 stdout 上的 JSON。
 
 ## 快速参考
 
 ```
-python3 $SCRIPT quote AAPL
-python3 $SCRIPT quote AAPL MSFT GOOGL TSLA
-python3 $SCRIPT search "Tesla"
-python3 $SCRIPT history NVDA --range 6mo
-python3 $SCRIPT compare AAPL MSFT GOOGL
-python3 $SCRIPT crypto BTC ETH SOL
+python $SCRIPT quote AAPL
+python $SCRIPT quote AAPL MSFT
+python $SCRIPT search Tesla
+python $SCRIPT history NVDA --range 6mo
+python $SCRIPT compare AAPL MSFT
+python $SCRIPT crypto BTC
 ```
 
 ## 命令
 
 ### `quote SYMBOL [SYMBOL2 ...]`
 
-当前价格、涨跌额、涨跌幅、成交量、52 周高低点。
+最近一次实时收盘、涨跌、成交量。非加密货币先走 IB `/scan`，IB 不可用则
+TradingView。加密货币走 Hyperliquid，然后 Binance。
 
 ### `search QUERY`
 
-通过公司名称查找股票代码。返回前 5 条结果：代码、名称、交易所、类型。
+TradingView 代码搜索。返回前 5 条。
 
 ### `history SYMBOL [--range RANGE]`
 
-每日 OHLCV 数据及统计信息（最小值、最大值、均值、总回报率 %）。时间范围：`1mo`、
-`3mo`、`6mo`、`1y`、`5y`。默认：`1mo`。
+每日 OHLCV。范围：`1mo`、`3mo`、`6mo`、`1y`、`5y`。默认：`1mo`。
 
 ### `compare SYMBOL1 SYMBOL2 [...]`
 
-并排对比：价格、涨跌幅、52 周表现。
+并排实时报价。
 
-### `crypto SYMBOL [SYMBOL2 ...]`
+### `crypto SYMBOL`
 
-加密货币价格。传入 `BTC`（脚本会自动追加 `-USD`）。
+Hyperliquid 公开 K 线，否则 Binance。传入 `BTC`。
 
 ## 注意事项
 
-- Yahoo Finance 的 API 为非官方接口。接口可能在未通知的情况下发生变更或触发频率限制——如果请求开始失败，原因即在于此。
-- 当 Yahoo 的 crumb 会话未建立时，`quote` 命令中的 `market_cap` 和 `pe_ratio` 可能返回 null。设置 `ALPHA_VANTAGE_KEY` 可进行补充。
-- 批量请求之间请添加适当延迟，以避免触发频率限制。
-- 本 skill 为只读——不支持下单，不集成账户。
+- loopback 上没有 IB 且 TV/HL/Binance 也失败时，输出
+  `{"error": "no approved live source"}`——没有延迟兜底。
+- `BEJTRADER_URL` 必须是 loopback（`127.0.0.1` / `localhost`）。公网主机被拒绝。
+- 本 skill 为只读——不支持下单。
 
 ## 验证
 
 ```
-python3 ~/.hermes/skills/finance/stocks/scripts/stocks_client.py quote AAPL
+python ~/.hermes/skills/finance/stocks/scripts/stocks_client.py quote AAPL
 ```
 
-返回包含 `symbol: "AAPL"` 及数值型 `price` 字段的 JSON 对象。
+VM 上 BejTrader 可用时，JSON 含 `symbol`、`price` 以及 `ibkr` /
+`tradingview` / `hyperliquid` / `binance` 的 `data_source`。没有实时行情时
+`error` 为 `no approved live source`。
