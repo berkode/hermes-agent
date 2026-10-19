@@ -1,95 +1,44 @@
 ---
 name: stocks
-description: Live IB, TradingView, Hyperliquid, or Binance quotes.
+description: Read-only quotes from APPROVED sources only. TradingView covers equities, ETFs, futures and FX. Hyperliquid and Binance cover crypto. IBKR marks for held positions come via bejtrader. Yahoo and Alpha Vantage were removed.
 version: 0.2.0
-author: Mibay (Mibayy), Hermes Agent
+author: Mibay (Mibayy), Hermes Agent; Bej policy edit 2026-10-19
 license: MIT
-platforms: [linux, macos, windows]
+platforms: [linux]
 metadata:
   hermes:
-    tags: [Stocks, Finance, Market, Crypto, Investing]
+    tags: [Stocks, Finance, Market, Crypto, Investing, TradingView, Hyperliquid, Binance, IBKR]
     category: finance
     related_skills: [dcf-model, comps-analysis, lbo-model]
 ---
 
-# Stocks Skill
+# Stocks Skill (approved sources only)
 
-Read-only live quotes and daily bars. Unapproved delayed tapes are not
-sources. Equities go through the BejTrader IB `/scan` endpoint on
-loopback; crypto through Hyperliquid then Binance; TradingView is the
-scanner/search tape. No approved live source → refuse.
+**Policy (Master, 2026-10-19):** the only allowed price sources are IBKR, TradingView, Hyperliquid, Binance and axiom.trade. **Yahoo Finance and Alpha Vantage are banned as price sources.** Never call them, not even as a fallback. Alpha Vantage is used only for the daily earnings *dates* file, `~/berkode/bejcapital/data/earnings/earnings_calendar_latest.json`, which is not a price.
 
-## When to Use
-
-- User asks for a current stock or crypto price
-- User wants OHLCV history or a side-by-side compare
-- User wants a ticker lookup by name (TradingView search)
-
-## Prerequisites
-
-Python 3 stdlib only. On the Oracle VM, BejTrader must be listening on
-`http://127.0.0.1:5001` for IB-backed equity/futures bars. Override with
-`BEJTRADER_URL` only when the host is loopback. Crypto does not need IB.
+Sources used by `stocks_client.py`. All are free, need no key, and use Python stdlib only.
+- **Equities, ETFs, futures, FX**: the TradingView public scanner plus symbol search. On the free feed, US equities usually lag by 15 minutes. Check `feed` (`update_mode`, e.g. `delayed_streaming_900`).
+- **Crypto**: Hyperliquid `allMids` (perp mid) first, then Binance public market data (`data-api.binance.vision`). Binance adds the 24h change and volume.
+- **IBKR marks for positions we hold**: `positions` reads bejtrader `GET http://127.0.0.1:5001/api/positions`. It is read-only.
 
 ## How to Run
-
-Invoke through the `terminal` tool. Once installed:
-
 ```
-SCRIPT=~/.hermes/skills/finance/stocks/scripts/stocks_client.py
-python $SCRIPT quote AAPL
+SCRIPT=~/.hermes/profiles/bej/skills/finance/stocks/scripts/stocks_client.py
+python3 $SCRIPT quote AAPL MSFT          # TradingView
+python3 $SCRIPT quote NASDAQ:NVDA        # explicit TV symbol
+python3 $SCRIPT search "Tesla"
+python3 $SCRIPT history NVDA --range 6mo # TV performance summary (no daily bars)
+python3 $SCRIPT compare AAPL MSFT GOOGL
+python3 $SCRIPT crypto BTC ETH SOL       # Hyperliquid / Binance
+python3 $SCRIPT positions                # IBKR marks via bejtrader
 ```
-
-All output is JSON on stdout.
-
-## Quick Reference
-
-```
-python $SCRIPT quote AAPL
-python $SCRIPT quote AAPL MSFT
-python $SCRIPT search Tesla
-python $SCRIPT history NVDA --range 6mo
-python $SCRIPT compare AAPL MSFT
-python $SCRIPT crypto BTC
-```
-
-## Commands
-
-### `quote SYMBOL [SYMBOL2 ...]`
-
-Last live close, change, volume. IB `/scan` first for non-crypto; TV scanner
-if IB is down. Crypto uses Hyperliquid then Binance.
-
-### `search QUERY`
-
-TradingView symbol search. Top 5 matches.
-
-### `history SYMBOL [--range RANGE]`
-
-Daily OHLCV. Ranges: `1mo`, `3mo`, `6mo`, `1y`, `5y`. Default: `1mo`.
-
-### `compare SYMBOL1 SYMBOL2 [...]`
-
-Side-by-side live quotes.
-
-### `crypto SYMBOL`
-
-Hyperliquid public candles, else Binance. Pass `BTC` (USD quote).
+The output is JSON. Every row carries `source`.
 
 ## Pitfalls
-
-- Missing IB on loopback plus a failed TV/HL/Binance fetch prints
-  `{"error": "no approved live source"}` — there is no delayed fallback.
-- `BEJTRADER_URL` must stay loopback (`127.0.0.1` / `localhost`). Public
-  hosts are refused.
-- This is read-only — no order placement.
+- The free TradingView feed is delayed for many US listings, so never present it as real-time. Quote `feed`.
+- `history` returns performance percentages and 52-week levels, not OHLCV. For bars, use IBKR (bejtrader) or a TradingView chart.
+- Binance.com returns HTTP 451 from this VM, so the script uses the public `data-api.binance.vision` mirror instead.
+- This skill is read-only. It has no order tools.
 
 ## Verification
-
-```
-python ~/.hermes/skills/finance/stocks/scripts/stocks_client.py quote AAPL
-```
-
-On the VM with BejTrader up, JSON includes `symbol` and `price` and
-`data_source` of `ibkr`, `tradingview`, `hyperliquid`, or `binance`.
-Without a live tape the JSON `error` is `no approved live source`.
+`python3 $SCRIPT quote AAPL` returns `"source": "tradingview"` and a numeric `price`.
