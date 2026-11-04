@@ -332,3 +332,13 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# secrets-audit 2026-10-19 (added locally, not committed)
+*.encrypt
+*.encrypted
+secret.key
+*.key
+credentials*.json
+secrets.json
+!.env.example
+!*.env.example
