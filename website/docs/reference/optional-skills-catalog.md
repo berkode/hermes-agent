@@ -132,7 +132,7 @@ hermes skills uninstall <skill-name>
 | [**merger-model**](../user-guide/skills/optional/finance/finance-merger-model.md) | Build M&A accretion/dilution workbooks in Excel. |
 | [**polymarket**](../user-guide/skills/optional/finance/finance-polymarket.md) | Query Polymarket: markets, prices, orderbooks, history. |
 | [**pptx-author**](../user-guide/skills/optional/finance/finance-pptx-author.md) | Build PowerPoint decks headless with python-pptx. |
-| [**stocks**](../user-guide/skills/optional/finance/finance-stocks.md) | Stock quotes, history, search, compare, crypto via Yahoo. |
+| [**stocks**](../user-guide/skills/optional/finance/finance-stocks.md) | Live IB, TradingView, Hyperliquid, or Binance quotes. |
 
 ## gaming
 

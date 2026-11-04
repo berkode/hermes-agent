@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [tradingview, pine, bejcapital, automation, playwright]
     category: devops
-    related_skills: [github-pr-workflow]
+    related_skills: [github]
 ---
 
 # TradingView Sync Skill
