@@ -10,6 +10,7 @@ import re
 import shlex
 import threading
 import unicodedata
+from typing import Any
 from urllib.parse import unquote_plus
 
 # Shared with agent/file_safety's read-block list so the two defenses can't
@@ -1453,23 +1454,33 @@ def _reset_plugin_redaction_patterns() -> None:
 # ---------------------------------------------------------------------------
 
 # Secret-keyword adjacency for high-entropy hex/base64 blobs that carry no vendor
-# prefix. The keyword must appear within WINDOW chars before or after the blob.
+# prefix. The keyword must appear within WINDOW chars before or after the blob, as a
+# WHOLE word — substring stems like "auth" in "Author" or "pass" in "passed" must not
+# match. Use \b-anchored alternation instead of `kw in ctx` substring scans.
 _SECRET_ADJACENT_KEYWORDS = frozenset({
     "secret", "token", "key", "password", "passwd", "pass", "pw",
     "credential", "apikey", "api_key", "auth", "private", "signing",
 })
+_SECRET_ADJACENT_KEYWORD_RE = re.compile(
+    r"\b(?:secret|token|key|password|passwd|pass|pw|credential|apikey|api_key|auth|private|signing)\b",
+    re.IGNORECASE,
+)
 
 _HEX_RE = re.compile(r"\b[0-9a-fA-F]{40,}\b")
 _BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")
 
 
 def _is_high_entropy_secret_adjacent(text: str, start: int, end: int) -> bool:
-    """True if a secret keyword sits within WINDOW chars of text[start:end]."""
+    """True if a secret keyword sits within WINDOW chars of text[start:end].
+
+    Whole-word keyword match only: "auth" matches "auth_key" boundary but not
+    "Author", "pass" matches "pass" but not "passed".
+    """
     window = 80
     lo = max(0, start - window)
     hi = min(len(text), end + window)
-    ctx = text[lo:hi].lower()
-    return any(kw in ctx for kw in _SECRET_ADJACENT_KEYWORDS)
+    ctx = text[lo:hi]
+    return _SECRET_ADJACENT_KEYWORD_RE.search(ctx) is not None
 
 
 # Placeholder written when a tool result cannot be scanned. Fails closed: never
@@ -1485,38 +1496,82 @@ def redact_tool_result(content: Any) -> Any:
     ``[REDACTED_SECRET]`` and fails closed: on any scan error it returns the
     placeholder rather than raw text.
 
-    Multimodal envelopes (dict with ``_multimodal=True`` + ``content`` list) have
-    their text parts scrubbed individually; image parts are untouched.
-    Non-str/list/dict content passes through unchanged.
+    Walks every string in the result: raw strings, list-of-strings, dicts,
+    multimodal content parts, and ``text_summary``. If a value cannot be
+    scanned, fail closed with ``[REDACTED_SECRET]`` — never return raw
+    structured content.
     """
     try:
         if isinstance(content, str):
             return _redact_secret_text(content)
         if isinstance(content, list):
-            return [_redact_tool_result_text_part(item) for item in content]
-        if isinstance(content, dict) and content.get("_multimodal") is True and isinstance(content.get("content"), list):
-            parts = []
-            for part in content["content"]:
-                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
-                    parts.append({**part, "text": _redact_secret_text(part["text"])})
-                else:
-                    parts.append(part)
-            return {**content, "content": parts}
+            return [_redact_tool_result_item(item) for item in content]
+        if isinstance(content, dict):
+            return _redact_tool_result_dict(content)
+        return content
     except Exception:
         # Fail closed: never return raw text when scanning fails.
         return REDACTED_TOOL_SECRET
-    return content
+
+
+def _redact_tool_result_item(item: Any) -> Any:
+    """Redact one list element (string, dict, or passthrough)."""
+    if isinstance(item, str):
+        return _redact_secret_text(item)
+    if isinstance(item, dict):
+        return _redact_tool_result_dict(item)
+    return item
+
+
+def _redact_tool_result_dict(value: dict) -> dict:
+    """Redact every string value in a dict, walking multimodal envelopes and
+    ``text_summary`` in particular."""
+    # Multimodal envelope: scrub each text part plus text_summary.
+    if value.get("_multimodal") is True and isinstance(value.get("content"), list):
+        parts = []
+        for part in value["content"]:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                parts.append({**part, "text": _redact_secret_text(part["text"])})
+            else:
+                parts.append(_redact_tool_result_item(part))
+        result = {**value, "content": parts}
+        if isinstance(result.get("text_summary"), str):
+            result["text_summary"] = _redact_secret_text(result["text_summary"])
+        return result
+    # Generic dict: redact every string value recursively.
+    result: dict = {}
+    for key, child in value.items():
+        if isinstance(child, str):
+            result[key] = _redact_secret_text(child)
+        elif isinstance(child, (list, dict)):
+            result[key] = redact_tool_result(child)
+        else:
+            result[key] = child
+    return result
 
 
 def _redact_tool_result_text_part(item: Any) -> Any:
+    """Redact one list element: dicts get their ``text`` field scrubbed."""
     if isinstance(item, dict) and isinstance(item.get("text"), str):
         return {**item, "text": _redact_secret_text(item["text"])}
     return item
 
 
 def _redact_secret_text(text: str) -> str:
-    """Replace every key-like substring in ``text`` with ``[REDACTED_SECRET]``."""
+    """Replace every key-like substring in ``text`` with ``[REDACTED_SECRET]``.
+
+    Reuses the existing redaction pipeline (vault-registered values,
+    control-split masking per issue #77484, vendor prefixes, PEM, JWT,
+    high-entropy adjacency) so the tool-result path is not a weaker
+    parallel scanner.
+    """
     result = text
+
+    # Vault secrets are a hard model-egress boundary: scrubbed regardless.
+    result = redact_registered_vault_values(result)
+
+    # Control/zero-width chars can split a token body so _PREFIX_RE alone misses it.
+    result = _mask_control_split_tokens(result, lambda v: REDACTED_TOOL_SECRET)
 
     # Vendor-prefixed API keys (sk-, ghp_, xox, AWS, Stripe, etc.)
     try:

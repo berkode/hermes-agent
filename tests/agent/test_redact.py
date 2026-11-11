@@ -1808,3 +1808,134 @@ class TestRedactToolResult:
         assert redact_tool_result(42) == 42
         assert redact_tool_result(None) is None
 
+
+class TestToolResultWholeWordKeywordAdjacency:
+    """High-entropy hex/base64 adjacency uses whole-word keyword matches, not substring stems."""
+
+    def test_git_log_block_unchanged(self):
+        """commit SHA plus an ``Author:`` line must not trip the adjacency matcher:
+        "author" is not a secret keyword, and even "auth" (in "Author") must not
+        substring-match the keyword set."""
+        from agent.redact import redact_tool_result
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        block = (
+            f"commit {sha}\n"
+            "Author: Jane Doe <jane@example.com>\n"
+            "Date:   Wed Nov 11 11:21:05 2026 +0000\n"
+            "\n"
+            "    Fix redaction of tool-result secrets\n"
+        )
+        assert redact_tool_result(block) == block
+
+    def test_hex_near_auth_prose_is_not_redacted(self):
+        """``Authorization`` in prose contains ``auth`` as a stem, not a whole word —
+        no redaction of adjacent hex."""
+        from agent.redact import redact_tool_result
+        blob = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        text = f"The Authorization header carried {blob}"
+        assert redact_tool_result(text) == text
+
+    def test_hex_near_passed_is_not_redacted(self):
+        """``passed`` contains ``pass`` as a stem — no redaction of adjacent hex."""
+        from agent.redact import redact_tool_result
+        blob = "deadbeef" * 8
+        text = f"The check passed with hash {blob}"
+        assert redact_tool_result(text) == text
+
+    def test_hex_next_to_whole_word_secret_is_redacted(self):
+        """Whole-word ``secret`` adjacent to hex still redacts."""
+        from agent.redact import redact_tool_result
+        blob = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        text = f"secret: {blob}"
+        assert "[REDACTED_SECRET]" in redact_tool_result(text)
+        assert blob not in redact_tool_result(text)
+
+
+class TestToolResultWalksEveryString:
+    """redact_tool_result must walk raw strings, lists, dicts, multimodal parts, and text_summary."""
+
+    def test_text_summary_is_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        result = {
+            "_multimodal": True,
+            "content": [{"type": "text", "text": "page snapshot"}],
+            "text_summary": f"summary contains {token}",
+        }
+        out = redact_tool_result(result)
+        assert token not in out["text_summary"]
+        assert "[REDACTED_SECRET]" in out["text_summary"]
+
+    def test_nested_dict_strings_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "ghp_" + "A" * 40
+        result = {"metadata": {"credential": token, "count": 3}, "other": "plain"}
+        out = redact_tool_result(result)
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in str(out)
+        assert out["other"] == "plain"
+        assert out["metadata"]["count"] == 3
+
+    def test_list_of_strings_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "xoxb-" + "0" * 12 + "-" + "a" * 14
+        result = ["line one", f"line two {token} here", "line three"]
+        out = redact_tool_result(result)
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in out[1]
+
+    def test_unscannable_value_fails_closed(self, monkeypatch):
+        """If a value cannot be scanned, fail closed — never return raw structured content."""
+        from agent.redact import redact_tool_result
+        from agent import redact as R
+
+        class ExplodingPattern:
+            def sub(self, *args, **kwargs):
+                raise RuntimeError("scan exploded")
+
+        orig = R._PREFIX_RE
+        monkeypatch.setattr(R, "_PREFIX_RE", ExplodingPattern())
+        try:
+            out = redact_tool_result({"nested": {"credential": "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"}})
+        finally:
+            monkeypatch.setattr(R, "_PREFIX_RE", orig)
+        # The unscannable string value becomes [REDACTED_SECRET]; no raw secret survives.
+        assert out == {"nested": {"credential": "[REDACTED_SECRET]"}}, out
+
+
+class TestProviderEgressContainsNoToolSecret:
+    """A mocked outgoing provider request (assembled messages or HTTP body) contains
+    none of a tool-returned key-like fixture."""
+
+    def test_assembled_messages_have_no_tool_returned_secret(self):
+        from agent.redact import redact_tool_result
+        from agent.tool_dispatch_helpers import make_tool_result_message
+
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        tool_msg = make_tool_result_message("read_file", f"contents:\n{token}", "call_1")
+
+        # Simulate assembling the outgoing provider request from messages.
+        messages = [
+            {"role": "user", "content": "read the file"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+            tool_msg,
+        ]
+        assembled = "\n".join(str(m) for m in messages)
+        assert token not in assembled
+        assert "[REDACTED_SECRET]" in tool_msg["content"]
+
+    def test_http_body_contains_no_tool_returned_secret(self):
+        """Mock an HTTP request body assembled from tool results; the key-like fixture
+        must not appear raw."""
+        import json
+
+        from agent.redact import redact_tool_result
+
+        token = "ghp_" + "A" * 40
+        tool_result = redact_tool_result(f"file contents: {token}")
+        assert token not in tool_result
+
+        body = json.dumps({"messages": [{"role": "tool", "content": tool_result}]})
+        assert token not in body
+        assert "[REDACTED_SECRET]" in body
+

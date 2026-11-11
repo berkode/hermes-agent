@@ -14,6 +14,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from agent.redact import redact_tool_result
+
 
 def _deterministic_call_id(item_type: str, item_id: str) -> str:
     """Stable tool_call id: the codex item id, else a hash so replay keeps prefix caches valid."""
@@ -98,7 +100,8 @@ class CodexEventProjector:
             None,
             tool_calls=[{"id": call_id, "type": "function", "function": {"name": name, "arguments": _format_tool_args(args)}}],
         )
-        tool_msg = {"role": "tool", "tool_call_id": call_id, "content": content}
+        tool_msg = {"role": "tool", "tool_call_id": call_id,
+                    "content": redact_tool_result(content)}
         return ProjectionResult(messages=[assistant_msg, tool_msg], is_tool_iteration=True)
 
     @staticmethod

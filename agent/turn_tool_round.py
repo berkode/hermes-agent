@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from agent.message_metadata import append_message
 from agent.message_sanitization import coalesce_tool_call_id, normalize_provider_tool_call_ids
+from agent.tool_dispatch_helpers import make_tool_result_message
 from agent.turn_preflight import compress_after_tool_results
 from agent.turn_tool_validation import validate_tool_calls
 
@@ -111,18 +112,13 @@ def run_tool_round(
         agent, assistant_message=assistant_message, finish_reason=finish_reason, messages=messages
     )
     append_message(messages, assistant_msg)
-
     # Mixed batch: error-result invalid calls and drop them from execution.
     if _invalid_batch_calls:
         for tc in _invalid_batch_calls:
-            append_message(messages, {
-                "role": "tool",
-                "name": tc.function.name,
-                "tool_call_id": coalesce_tool_call_id(tc),
-                "content": _invalid_tool_name_error_content(
-                    tc.function.name, agent.valid_tool_names
-                ),
-            })
+            append_message(messages, make_tool_result_message(
+                tc.function.name,
+                _invalid_tool_name_error_content(tc.function.name, agent.valid_tool_names),
+                coalesce_tool_call_id(tc)))
         assistant_message.tool_calls = [
             tc for tc in assistant_message.tool_calls if tc.function.name in agent.valid_tool_names
         ]

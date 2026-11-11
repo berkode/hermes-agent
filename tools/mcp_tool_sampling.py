@@ -8,6 +8,8 @@ import logging
 import time
 from contextvars import Context
 from typing import TYPE_CHECKING, Callable, List, Optional
+
+from agent.redact import redact_tool_result
 from utils import is_truthy_value
 from tools.mcp_tool_common import _MISSING, _exc_str, _safe_numeric, _sanitize_error, mcp_field, _core
 from tools.mcp_tool_schema import _normalize_mcp_input_schema
@@ -57,7 +59,8 @@ def _convert_sampling_message(msg) -> list[dict]:
     others = [b for b in blocks if _tool_use_id(b) is _MISSING]
     tool_uses = [b for b in others if hasattr(b, "name") and hasattr(b, "input")]
     content_blocks = [b for b in others if not (hasattr(b, "name") and hasattr(b, "input"))]
-    out = [{"role": "tool", "tool_call_id": _tool_use_id(tr), "content": _tool_result_text(tr)} for tr in tool_results]
+    out = [{"role": "tool", "tool_call_id": _tool_use_id(tr),
+            "content": redact_tool_result(_tool_result_text(tr))} for tr in tool_results]
     if tool_uses:
         msg_dict: dict = {"role": msg.role, "tool_calls": [_tool_call_dict(tu, i) for i, tu in enumerate(tool_uses)]}
         text_parts = [b.text for b in content_blocks if hasattr(b, "text")]

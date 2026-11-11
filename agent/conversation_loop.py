@@ -19,7 +19,7 @@ from agent.agent_runtime_helpers_placeholders import hidden_interrupt_placeholde
 from agent.codex_responses_adapter import _summarize_user_message_for_log
 from agent.fast_mode import begin_turn as begin_fast_mode_turn
 from agent.message_metadata import append_message, without_persistence_fields
-from agent.message_sanitization import _repair_tool_call_arguments, _sanitize_surrogates
+from agent.message_sanitization import _repair_tool_call_arguments, _sanitize_surrogates, close_interrupted_tool_sequence
 from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, _estimate_tools_tokens_rough
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_builder import RUNTIME_ENVIRONMENT_END, RUNTIME_ENVIRONMENT_HEADING
@@ -1143,19 +1143,11 @@ def _content_policy_blocked_result(
     """Terminal turn result for a content-policy block (deterministic for the unchanged
     prompt, so no retry); shared by the HTTP-200 and exception paths.
 
-    If the transcript tail is a ``tool`` message, append an assistant boundary row so
-    the strict role alternation stays intact and the next turn does not resume on a
-    dangling ``tool`` row."""
-    if isinstance(messages, list) and messages:
-        tail = messages[-1]
-        if isinstance(tail, dict) and tail.get("role") == "tool":
-            tool_name = tail.get("name") or tail.get("tool_name") or "tool"
-            messages = list(messages)
-            messages.append({
-                "role": "assistant",
-                "content": f"[tool error: {tool_name} — content_policy_blocked]",
-                "display_kind": "tool_error_boundary",
-            })
+    If the transcript tail is a ``tool`` message, ``close_interrupted_tool_sequence``
+    appends an assistant boundary row so the strict role alternation stays intact and
+    the next turn does not resume on a dangling ``tool`` row."""
+    if isinstance(messages, list):
+        close_interrupted_tool_sequence(messages, final_response)
     return {
         "final_response": final_response, "messages": messages, "api_calls": api_call_count,
         "completed": False, "failed": True, "error": f"content_policy_blocked: {error_detail}",
