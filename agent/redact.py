@@ -1488,7 +1488,7 @@ def _is_high_entropy_secret_adjacent(text: str, start: int, end: int) -> bool:
 REDACTED_TOOL_SECRET = "[REDACTED_SECRET]"
 
 
-def redact_tool_result(content: Any) -> Any:
+def redact_tool_result(content: Any, _depth: int = 0) -> Any:
     """Scrub secret-like material from a tool result before it reaches the model.
 
     Applied to every tool output (file reads, shell output, web extracts, etc.)
@@ -1497,35 +1497,47 @@ def redact_tool_result(content: Any) -> Any:
     placeholder rather than raw text.
 
     Walks every string in the result: raw strings, list-of-strings, dicts,
-    multimodal content parts, and ``text_summary``. If a value cannot be
-    scanned, fail closed with ``[REDACTED_SECRET]`` — never return raw
-    structured content.
+    multimodal content parts, and ``text_summary``. Nested lists are walked
+    recursively. Tuples, bytes, and other unscannable containers fail closed.
+    Ints/None/bools pass through. Depth is bounded by ``REDACT_WALK_MAX_DEPTH``.
     """
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET
     try:
         if isinstance(content, str):
             return _redact_secret_text(content)
         if isinstance(content, list):
-            return [_redact_tool_result_item(item) for item in content]
+            return [_redact_tool_result_item(item, _depth + 1) for item in content]
         if isinstance(content, dict):
-            return _redact_tool_result_dict(content)
+            return _redact_tool_result_dict(content, _depth + 1)
+        if isinstance(content, (tuple, bytes, bytearray, set, frozenset)):
+            return REDACTED_TOOL_SECRET
         return content
     except Exception:
         # Fail closed: never return raw text when scanning fails.
         return REDACTED_TOOL_SECRET
 
 
-def _redact_tool_result_item(item: Any) -> Any:
-    """Redact one list element (string, dict, or passthrough)."""
+def _redact_tool_result_item(item: Any, _depth: int = 0) -> Any:
+    """Redact one list element (string, dict, nested list; fail closed on tuples/bytes/sets)."""
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET
     if isinstance(item, str):
         return _redact_secret_text(item)
     if isinstance(item, dict):
-        return _redact_tool_result_dict(item)
-    return item
+        return _redact_tool_result_dict(item, _depth + 1)
+    if isinstance(item, list):
+        return [_redact_tool_result_item(sub, _depth + 1) for sub in item]
+    if isinstance(item, (tuple, bytes, bytearray, set, frozenset)):
+        return REDACTED_TOOL_SECRET
+    return item  # ints, None, bools, floats pass through
 
 
-def _redact_tool_result_dict(value: dict) -> dict:
+def _redact_tool_result_dict(value: dict, _depth: int = 0) -> dict:
     """Redact every string value in a dict, walking multimodal envelopes and
     ``text_summary`` in particular."""
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET  # type: ignore[return-value]
     # Multimodal envelope: scrub each text part plus text_summary.
     if value.get("_multimodal") is True and isinstance(value.get("content"), list):
         parts = []
@@ -1533,7 +1545,7 @@ def _redact_tool_result_dict(value: dict) -> dict:
             if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
                 parts.append({**part, "text": _redact_secret_text(part["text"])})
             else:
-                parts.append(_redact_tool_result_item(part))
+                parts.append(_redact_tool_result_item(part, _depth + 1))
         result = {**value, "content": parts}
         if isinstance(result.get("text_summary"), str):
             result["text_summary"] = _redact_secret_text(result["text_summary"])
@@ -1543,8 +1555,8 @@ def _redact_tool_result_dict(value: dict) -> dict:
     for key, child in value.items():
         if isinstance(child, str):
             result[key] = _redact_secret_text(child)
-        elif isinstance(child, (list, dict)):
-            result[key] = redact_tool_result(child)
+        elif isinstance(child, (list, tuple, dict, bytes, bytearray, set, frozenset)):
+            result[key] = redact_tool_result(child, _depth + 1)
         else:
             result[key] = child
     return result
@@ -1560,57 +1572,21 @@ def _redact_tool_result_text_part(item: Any) -> Any:
 def _redact_secret_text(text: str) -> str:
     """Replace every key-like substring in ``text`` with ``[REDACTED_SECRET]``.
 
-    Reuses the existing redaction pipeline (vault-registered values,
-    control-split masking per issue #77484, vendor prefixes, PEM, JWT,
-    high-entropy adjacency) so the tool-result path is not a weaker
-    parallel scanner.
+    Reuses the full existing redaction pipeline via ``redact_for_egress``
+    (``redact_sensitive_text(force=True)`` plus bearer-residue sweep) so the
+    tool-result path is not a weaker parallel scanner. Covers bearer tokens,
+    DSNs, secret headers, assignment redaction, Zhipu keys, URL tokens,
+    control-split masking, vault values, PEM, JWT, and high-entropy adjacency.
+    Any detected secret causes the whole string to fail closed to
+    ``[REDACTED_SECRET]`` for model egress.
     """
-    result = text
-
-    # Vault secrets are a hard model-egress boundary: scrubbed regardless.
-    result = redact_registered_vault_values(result)
-
-    # Control/zero-width chars can split a token body so _PREFIX_RE alone misses it.
-    result = _mask_control_split_tokens(result, lambda v: REDACTED_TOOL_SECRET)
-
-    # Vendor-prefixed API keys (sk-, ghp_, xox, AWS, Stripe, etc.)
     try:
-        result = _PREFIX_RE.sub(lambda _m: REDACTED_TOOL_SECRET, result)
+        redacted = redact_for_egress(text)
     except Exception:
         return REDACTED_TOOL_SECRET
-
-    # Private key PEM blocks
-    try:
-        result = _PRIVATE_KEY_RE.sub(REDACTED_TOOL_SECRET, result)
-    except Exception:
+    if redacted == REDACTION_UNAVAILABLE or redacted != text:
         return REDACTED_TOOL_SECRET
-
-    # JWTs
-    try:
-        result = _JWT_RE.sub(lambda _m: REDACTED_TOOL_SECRET, result)
-    except Exception:
-        return REDACTED_TOOL_SECRET
-
-    # High-entropy hex/base64 adjacent to a secret keyword
-    try:
-        def _maybe_redact_hex(m: re.Match) -> str:
-            if _is_high_entropy_secret_adjacent(result, m.start(), m.end()):
-                return REDACTED_TOOL_SECRET
-            return m.group(0)
-        result = _HEX_RE.sub(_maybe_redact_hex, result)
-    except Exception:
-        return REDACTED_TOOL_SECRET
-
-    try:
-        def _maybe_redact_b64(m: re.Match) -> str:
-            if _is_high_entropy_secret_adjacent(result, m.start(), m.end()):
-                return REDACTED_TOOL_SECRET
-            return m.group(0)
-        result = _BASE64_RE.sub(_maybe_redact_b64, result)
-    except Exception:
-        return REDACTED_TOOL_SECRET
-
-    return result
+    return text
 
 
 class RedactingFormatter(logging.Formatter):

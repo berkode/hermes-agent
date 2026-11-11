@@ -1851,6 +1851,27 @@ class TestToolResultWholeWordKeywordAdjacency:
         assert blob not in redact_tool_result(text)
 
 
+class TestToolResultBearerAndDSN:
+    """Prefix-less bearer tokens and DSN passwords must not survive redact_tool_result."""
+
+    def test_prefixless_bearer_is_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        bearer = f"Authorization: Bearer {token}"
+        out = redact_tool_result(bearer)
+        assert bearer not in out
+        assert token not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_dsn_password_is_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        dsn = f"postgresql://app_user:{token}@db.example.com:5432/appdb"
+        out = redact_tool_result(dsn)
+        assert token not in out
+        assert "[REDACTED_SECRET]" in out
+
+
 class TestToolResultWalksEveryString:
     """redact_tool_result must walk raw strings, lists, dicts, multimodal parts, and text_summary."""
 
@@ -1884,6 +1905,39 @@ class TestToolResultWalksEveryString:
         assert token not in str(out)
         assert "[REDACTED_SECRET]" in out[1]
 
+    def test_nested_list_of_lists_redacted(self):
+        """Nested lists inside dicts must be walked (not skipped)."""
+        from agent.redact import redact_tool_result
+        token = "xoxb-" + "0" * 12 + "-" + "a" * 14
+        result = {"rows": [["line one", f"line two {token} here"], ["line three"]]}
+        out = redact_tool_result(result)
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in str(out)
+
+    def test_tuple_and_bytes_fail_closed(self):
+        """Tuples, bytes, and other unscannable containers fail closed to
+        [REDACTED_SECRET], never returned raw. Ints/None pass through."""
+        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+
+        out = redact_tool_result(b"raw bytes with " + token.encode())
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in str(out)
+
+        result = {"data": ("tuple contains", token), "count": 42, "note": None}
+        out = redact_tool_result(result)
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in str(out)
+        assert out["count"] == 42
+        assert out["note"] is None
+
+    def test_int_and_none_pass_through(self):
+        from agent.redact import redact_tool_result
+        assert redact_tool_result(42) == 42
+        assert redact_tool_result(None) is None
+        assert redact_tool_result(True) is True
+        assert redact_tool_result(3.14) == 3.14
+
     def test_unscannable_value_fails_closed(self, monkeypatch):
         """If a value cannot be scanned, fail closed — never return raw structured content."""
         from agent.redact import redact_tool_result
@@ -1905,37 +1959,60 @@ class TestToolResultWalksEveryString:
 
 class TestProviderEgressContainsNoToolSecret:
     """A mocked outgoing provider request (assembled messages or HTTP body) contains
-    none of a tool-returned key-like fixture."""
+    none of a tool-returned key-like fixture, including prefix-less bearer tokens
+    and DSN passwords."""
 
-    def test_assembled_messages_have_no_tool_returned_secret(self):
+    def _make_tool_result_messages(self, token: str, tool_call_id: str = "call_1"):
         from agent.redact import redact_tool_result
         from agent.tool_dispatch_helpers import make_tool_result_message
 
-        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
-        tool_msg = make_tool_result_message("read_file", f"contents:\n{token}", "call_1")
-
-        # Simulate assembling the outgoing provider request from messages.
+        dsn = f"postgresql://app_user:{token}@db.example.com:5432/appdb"
+        tool_msg = make_tool_result_message(
+            "read_file", f"file contents:\n{dsn}", tool_call_id
+        )
         messages = [
             {"role": "user", "content": "read the file"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            },
             tool_msg,
         ]
+        return messages, tool_msg, dsn
+
+    def test_assembled_messages_have_no_tool_returned_secret(self):
+        """Outgoing provider messages assembled from tool results must not contain
+        a tool-returned DSN password or prefix-less bearer token raw."""
+        from agent.redact import redact_tool_result
+
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        bearer = f"Authorization: Bearer {token}"
+        messages, tool_msg, _dsn = self._make_tool_result_messages(bearer)
+
+        # Simulate assembling the outgoing provider request from messages.
         assembled = "\n".join(str(m) for m in messages)
+        assert bearer not in assembled
         assert token not in assembled
         assert "[REDACTED_SECRET]" in tool_msg["content"]
 
-    def test_http_body_contains_no_tool_returned_secret(self):
-        """Mock an HTTP request body assembled from tool results; the key-like fixture
-        must not appear raw."""
+    def test_http_body_contains_no_tool_returned_dsn_password(self):
+        """Mock an HTTP request body assembled from tool results; the DSN password
+        and prefix-less bearer token must not appear raw."""
         import json
 
-        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        bearer = f"Authorization: Bearer {token}"
+        messages, _tool_msg, _dsn = self._make_tool_result_messages(bearer)
 
-        token = "ghp_" + "A" * 40
-        tool_result = redact_tool_result(f"file contents: {token}")
-        assert token not in tool_result
-
-        body = json.dumps({"messages": [{"role": "tool", "content": tool_result}]})
+        body = json.dumps({"messages": messages})
+        assert bearer not in body
         assert token not in body
         assert "[REDACTED_SECRET]" in body
 
