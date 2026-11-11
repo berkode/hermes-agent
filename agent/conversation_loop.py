@@ -1141,7 +1141,21 @@ def _content_policy_blocked_result(
     messages: list[dict], api_call_count: int, *, final_response: str, error_detail: str
 ) -> dict[str, Any]:
     """Terminal turn result for a content-policy block (deterministic for the unchanged
-    prompt, so no retry); shared by the HTTP-200 and exception paths."""
+    prompt, so no retry); shared by the HTTP-200 and exception paths.
+
+    If the transcript tail is a ``tool`` message, append an assistant boundary row so
+    the strict role alternation stays intact and the next turn does not resume on a
+    dangling ``tool`` row."""
+    if isinstance(messages, list) and messages:
+        tail = messages[-1]
+        if isinstance(tail, dict) and tail.get("role") == "tool":
+            tool_name = tail.get("name") or tail.get("tool_name") or "tool"
+            messages = list(messages)
+            messages.append({
+                "role": "assistant",
+                "content": f"[tool error: {tool_name} — content_policy_blocked]",
+                "display_kind": "tool_error_boundary",
+            })
     return {
         "final_response": final_response, "messages": messages, "api_calls": api_call_count,
         "completed": False, "failed": True, "error": f"content_policy_blocked: {error_detail}",

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from agent.compression_marker import _COMPRESSION_MARKER_ARTIFACT_RE
 from agent.message_metadata import stamp_message_timestamp
+from agent.redact import REDACTED_TOOL_SECRET, redact_tool_result
 from agent.tool_result_classification import (
     FILE_MUTATING_TOOL_NAMES as _FILE_MUTATING_TOOLS,
     tool_may_have_side_effect,
@@ -460,6 +461,12 @@ def make_tool_result_message(
     tool_call_id = _normalize_tool_call_id(tool_call_id)
     # Elision notice is appended to the RAW content first, THEN wrapped, so it sits inside
     # the untrusted block next to the data it describes — once, at construction (cache-safe).
+    # Redaction runs before any wrapping: secrets leave the model boundary as [REDACTED_SECRET],
+    # never raw. Fail closed: an un-scannable result becomes the placeholder.
+    try:
+        content = redact_tool_result(content)
+    except Exception:
+        content = REDACTED_TOOL_SECRET
     wrapped = _maybe_wrap_untrusted(name, _maybe_append_elision_notice(name, content))
     message = stamp_message_timestamp({
         "role": "tool",

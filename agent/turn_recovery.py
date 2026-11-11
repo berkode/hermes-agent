@@ -809,7 +809,24 @@ def recover_after_classification(
 
 
 def _failed_turn_result(final_response: str, messages: Any, api_call_count: int, error: str) -> dict[str, Any]:
-    """Base failed-turn result dict shared by the two terminal paths."""
+    """Base failed-turn result dict shared by the two terminal paths.
+
+    If the transcript tail is a ``tool`` message (a tool ran before the provider
+    call errored), append an assistant boundary row so the strict
+    user→assistant(tool_calls)→tool→assistant role sequence stays intact.
+    Without this the next turn/cron run resumes on a dangling ``tool`` row and
+    hits ``turn stopped while a tool result was still pending``.
+    """
+    if isinstance(messages, list) and messages:
+        tail = messages[-1]
+        if isinstance(tail, dict) and tail.get("role") == "tool":
+            tool_name = tail.get("name") or tail.get("tool_name") or "tool"
+            messages = list(messages)
+            messages.append({
+                "role": "assistant",
+                "content": f"[tool error: {tool_name} — {error}]",
+                "display_kind": "tool_error_boundary",
+            })
     return {
         "final_response": final_response, "messages": messages, "api_calls": api_call_count,
         "completed": False, "failed": True, "error": error,

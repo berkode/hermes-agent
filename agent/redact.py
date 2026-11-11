@@ -1448,6 +1448,116 @@ def _reset_plugin_redaction_patterns() -> None:
         _rebuild_prefix_matcher()
 
 
+# ---------------------------------------------------------------------------
+# Tool-result redaction for the model-egress boundary
+# ---------------------------------------------------------------------------
+
+# Secret-keyword adjacency for high-entropy hex/base64 blobs that carry no vendor
+# prefix. The keyword must appear within WINDOW chars before or after the blob.
+_SECRET_ADJACENT_KEYWORDS = frozenset({
+    "secret", "token", "key", "password", "passwd", "pass", "pw",
+    "credential", "apikey", "api_key", "auth", "private", "signing",
+})
+
+_HEX_RE = re.compile(r"\b[0-9a-fA-F]{40,}\b")
+_BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")
+
+
+def _is_high_entropy_secret_adjacent(text: str, start: int, end: int) -> bool:
+    """True if a secret keyword sits within WINDOW chars of text[start:end]."""
+    window = 80
+    lo = max(0, start - window)
+    hi = min(len(text), end + window)
+    ctx = text[lo:hi].lower()
+    return any(kw in ctx for kw in _SECRET_ADJACENT_KEYWORDS)
+
+
+# Placeholder written when a tool result cannot be scanned. Fails closed: never
+# leaks raw text when the scanner itself errors.
+REDACTED_TOOL_SECRET = "[REDACTED_SECRET]"
+
+
+def redact_tool_result(content: Any) -> Any:
+    """Scrub secret-like material from a tool result before it reaches the model.
+
+    Applied to every tool output (file reads, shell output, web extracts, etc.)
+    in ``make_tool_result_message``. Replaces each detected secret with
+    ``[REDACTED_SECRET]`` and fails closed: on any scan error it returns the
+    placeholder rather than raw text.
+
+    Multimodal envelopes (dict with ``_multimodal=True`` + ``content`` list) have
+    their text parts scrubbed individually; image parts are untouched.
+    Non-str/list/dict content passes through unchanged.
+    """
+    try:
+        if isinstance(content, str):
+            return _redact_secret_text(content)
+        if isinstance(content, list):
+            return [_redact_tool_result_text_part(item) for item in content]
+        if isinstance(content, dict) and content.get("_multimodal") is True and isinstance(content.get("content"), list):
+            parts = []
+            for part in content["content"]:
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    parts.append({**part, "text": _redact_secret_text(part["text"])})
+                else:
+                    parts.append(part)
+            return {**content, "content": parts}
+    except Exception:
+        # Fail closed: never return raw text when scanning fails.
+        return REDACTED_TOOL_SECRET
+    return content
+
+
+def _redact_tool_result_text_part(item: Any) -> Any:
+    if isinstance(item, dict) and isinstance(item.get("text"), str):
+        return {**item, "text": _redact_secret_text(item["text"])}
+    return item
+
+
+def _redact_secret_text(text: str) -> str:
+    """Replace every key-like substring in ``text`` with ``[REDACTED_SECRET]``."""
+    result = text
+
+    # Vendor-prefixed API keys (sk-, ghp_, xox, AWS, Stripe, etc.)
+    try:
+        result = _PREFIX_RE.sub(lambda _m: REDACTED_TOOL_SECRET, result)
+    except Exception:
+        return REDACTED_TOOL_SECRET
+
+    # Private key PEM blocks
+    try:
+        result = _PRIVATE_KEY_RE.sub(REDACTED_TOOL_SECRET, result)
+    except Exception:
+        return REDACTED_TOOL_SECRET
+
+    # JWTs
+    try:
+        result = _JWT_RE.sub(lambda _m: REDACTED_TOOL_SECRET, result)
+    except Exception:
+        return REDACTED_TOOL_SECRET
+
+    # High-entropy hex/base64 adjacent to a secret keyword
+    try:
+        def _maybe_redact_hex(m: re.Match) -> str:
+            if _is_high_entropy_secret_adjacent(result, m.start(), m.end()):
+                return REDACTED_TOOL_SECRET
+            return m.group(0)
+        result = _HEX_RE.sub(_maybe_redact_hex, result)
+    except Exception:
+        return REDACTED_TOOL_SECRET
+
+    try:
+        def _maybe_redact_b64(m: re.Match) -> str:
+            if _is_high_entropy_secret_adjacent(result, m.start(), m.end()):
+                return REDACTED_TOOL_SECRET
+            return m.group(0)
+        result = _BASE64_RE.sub(_maybe_redact_b64, result)
+    except Exception:
+        return REDACTED_TOOL_SECRET
+
+    return result
+
+
 class RedactingFormatter(logging.Formatter):
     """Log formatter that redacts secrets from all log messages."""
 

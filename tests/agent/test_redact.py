@@ -2,6 +2,7 @@
 
 import ast
 import logging
+import re
 import time
 
 import pytest
@@ -1694,3 +1695,116 @@ class TestWebappLaunchLinks:
     def test_code_that_builds_such_a_link_is_left_alone(self):
         source = "target.hash = `hermes-session=${token}`\nconst FRAGMENT_KEY = 'hermes-session'\n"
         assert redact_sensitive_text(source, code_file=True) == source
+
+
+class TestRedactToolResult:
+    """``redact_tool_result`` scrubs key-like material from tool output before it reaches the model,
+    failing closed on scan errors."""
+
+    def test_prefix_api_keys_are_redacted(self):
+        from agent.redact import redact_tool_result
+        out = redact_tool_result("file contents: sk-live-0123456789abcdefghijklmnopqrstuvwxyz")
+        assert "sk-live-" not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_ghp_github_token_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "ghp_" + "A" * 40
+        out = redact_tool_result(f"leaked {token} here")
+        assert token not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_slack_token_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "xoxb-" + "0" * 12 + "-" + "a" * 14
+        out = redact_tool_result(f"slack {token}")
+        assert token not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_private_key_pem_redacted(self):
+        from agent.redact import redact_tool_result
+        pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
+        out = redact_tool_result(f"key block:\n{pem}")
+        assert "MIIEpAIBAAKCAQEA" not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_jwt_redacted(self):
+        from agent.redact import redact_tool_result
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNtPn"
+        out = redact_tool_result(f"token {jwt}")
+        assert jwt not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_high_entropy_hex_adjacent_to_secret_redacted(self):
+        from agent.redact import redact_tool_result
+        blob = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        out = redact_tool_result(f"secret: {blob}")
+        assert blob not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_high_entropy_base64_adjacent_to_secret_redacted(self):
+        from agent.redact import redact_tool_result
+        blob = "ZGF0YWJhc2U2NF9oaWdoX2VudHJvcHlfdmFsdWUxMjM0NTY3ODkw"
+        out = redact_tool_result(f"password={blob}")
+        assert blob not in out
+        assert "[REDACTED_SECRET]" in out
+
+    def test_ordinary_git_sha_not_mangled(self):
+        from agent.redact import redact_tool_result
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        text = f"commit {sha}\nfixup! {sha}"
+        assert redact_tool_result(text) == text
+
+    def test_ordinary_uuid_not_mangled(self):
+        from agent.redact import redact_tool_result
+        uuid = "550e8400-e29b-41d4-a716-446655440000"
+        text = f"id={uuid} ref={uuid}"
+        assert redact_tool_result(text) == text
+
+    def test_long_hex_without_secret_keyword_not_mangled(self):
+        from agent.redact import redact_tool_result
+        blob = "deadbeef" * 8  # 64 hex chars, no secret keyword nearby
+        text = f"hash={blob}"
+        assert redact_tool_result(text) == text
+
+    def test_encrypted_passthrough_placeholder_stays(self):
+        from agent.redact import redact_tool_result
+        text = "«redacted:ghp_…»"
+        assert redact_tool_result(text) == text
+
+    def test_multimodal_envelope_text_parts_redacted(self):
+        from agent.redact import redact_tool_result
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        env = {
+            "_multimodal": True,
+            "content": [
+                {"type": "text", "text": f"found {token} in page"},
+                {"type": "image", "image": "base64..."},
+            ],
+        }
+        out = redact_tool_result(env)
+        assert token not in str(out)
+        assert "[REDACTED_SECRET]" in out["content"][0]["text"]
+        assert out["content"][1]["type"] == "image"
+
+    def test_fail_closed_on_scanner_error(self, monkeypatch):
+        from agent.redact import redact_tool_result
+        from agent import redact as R
+
+        class ExplodingPattern:
+            def sub(self, *args, **kwargs):
+                raise RuntimeError("scan exploded")
+
+        orig = R._PREFIX_RE
+        monkeypatch.setattr(R, "_PREFIX_RE", ExplodingPattern())
+        try:
+            out = redact_tool_result("sk-live-0123456789abcdefghijklmnopqrstuvwxyz")
+        finally:
+            monkeypatch.setattr(R, "_PREFIX_RE", orig)
+        assert out == "[REDACTED_SECRET]", out
+
+    def test_non_string_content_passthrough(self):
+        from agent.redact import redact_tool_result
+        assert redact_tool_result(42) == 42
+        assert redact_tool_result(None) is None
+
