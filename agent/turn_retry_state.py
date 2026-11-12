@@ -32,6 +32,9 @@ class TurnRetryState:
     # Format / payload recovery guards
     thinking_sig_retry_attempted: bool = False
     invalid_encrypted_content_retry_attempted: bool = False
+    # The masked privacy route refused the payload with ``disallowed PII type SECRET``:
+    # one re-scrub-and-retry, only when the scrub actually changed the outgoing body.
+    pii_redaction_retry_attempted: bool = False
     native_compaction_reject_retry_attempted: bool = False
     image_shrink_retry_attempted: bool = False
     multimodal_tool_content_retry_attempted: bool = False

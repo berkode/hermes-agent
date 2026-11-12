@@ -21,7 +21,7 @@ from agent.conversation_compression import COMPRESSION_RETRY_CONTEXT_REDUCED_STA
 from agent.fast_mode import fast_mode_unprovisioned, mark_fast_mode_unavailable
 from agent.model_metadata import is_output_cap_error, parse_available_output_tokens_from_error
 from agent.retry_utils import is_zai_coding_overload_error, zai_coding_overload_retry_ceiling
-from agent.error_classifier import FailoverReason, classify_api_error
+from agent.error_classifier import FailoverReason, classify_api_error, is_pii_secret_block
 from agent.message_sanitization import (
     _looks_like_corrupt_image_rejection, _looks_like_image_content_rejection, _sanitize_messages_non_ascii,
     _sanitize_messages_surrogates, _sanitize_structure_non_ascii, _sanitize_structure_surrogates,
@@ -30,11 +30,12 @@ from agent.message_sanitization import (
 from agent.thinking_timeout_guidance import build_thinking_timeout_guidance, is_thinking_timeout
 from agent.vision_message_prep import _provider_model_key
 from agent.turn_failure_copy import (
-    CONTENT_POLICY_NEXT_STEPS, content_policy_copy, exhausted_copy, limit_reset_copy, nonretryable_copy,
+    content_policy_copy, exhausted_copy, limit_reset_copy, nonretryable_copy,
     provider_label_for, site_copy, stamp_failure,
 )
 from agent.turn_retry_state import TurnRetryState
 from agent.turn_recovery_codex import _is_codex_token_expired, _recover_stale_codex_reasoning
+from agent.turn_recovery_privacy import content_policy_block_lines, recover_rejected_credentials
 from hermes_constants import display_hermes_home
 from utils import base_url_host_matches
 
@@ -800,7 +801,11 @@ def recover_after_classification(
             _vlines(agent, "🔕 OAuth subscription doesn't support the 1M-context beta — disabled for this session and retrying...")
             return True, recovered_with_pool
 
-    if _refresh_credentials_after_401(agent, api_error, _retry, status_code):
+    # A payload the provider refused for a credential, or a rejected credential itself: both are
+    # one-shot repairs of the request's own material, ahead of the format strips (a payload-content
+    # problem, not a request shape). The PII branch re-scrubs and retries ONCE, never the identical
+    # body (#77484).
+    if recover_rejected_credentials(agent, api_error, _retry, status_code, api_messages, messages):
         return True, recovered_with_pool
 
     if _recover_format_errors(agent, api_error, classified, _retry, messages, api_messages):
@@ -1094,13 +1099,9 @@ def nonretryable_client_error_result(
             "      or check the proxy/WAF rules and your network.",
         )
     # Content-policy blocks: the provider refused this prompt, so recovery is a rephrase
-    # or another model, not key/retry advice.
+    # or another model, not key/retry advice. A PII/credential block has its own fix.
     if classified.reason == FailoverReason.content_policy_blocked:
-        _vlines(
-            agent,
-            f"   💡 {CONTENT_POLICY_NEXT_STEPS}",
-            "      To route future blocks to another provider automatically: hermes fallback add",
-        )
+        _vlines(agent, *content_policy_block_lines(api_error))
     # TLS certificate failures are environment problems — name the knobs for each cause.
     if classified.reason == FailoverReason.ssl_cert_verification:
         _vlines(
@@ -1126,7 +1127,9 @@ def nonretryable_client_error_result(
     if classified.reason == FailoverReason.content_policy_blocked:
         return _content_policy_blocked_result(
             messages, api_call_count,
-            final_response="⚠️ " + content_policy_copy(label=_plabel, summary=_nonretryable_summary),
+            final_response="⚠️ " + content_policy_copy(
+                label=_plabel, summary=_nonretryable_summary, pii_block=is_pii_secret_block(api_error),
+            ),
             error_detail=_nonretryable_summary,
         )
     # Billing walls get the same structured recovery descriptor as the max-retries path

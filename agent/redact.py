@@ -1513,7 +1513,7 @@ def redact_tool_result(content: Any, _depth: int = 0) -> Any:
         if isinstance(content, (tuple, bytes, bytearray, set, frozenset)):
             return REDACTED_TOOL_SECRET
         return content
-    except Exception:
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
         # Fail closed: never return raw text when scanning fails.
         return REDACTED_TOOL_SECRET
 
@@ -1582,11 +1582,86 @@ def _redact_secret_text(text: str) -> str:
     """
     try:
         redacted = redact_for_egress(text)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
         return REDACTED_TOOL_SECRET
     if redacted == REDACTION_UNAVAILABLE or redacted != text:
         return REDACTED_TOOL_SECRET
     return text
+
+
+# Message fields that can carry a credential-shaped value to the provider. ``role`` /
+# ``tool_call_id`` are protocol identifiers: a mask there would corrupt the request, and a
+# provider blocks on payload, not on identifiers.
+_OUTBOUND_TEXT_KEYS = ("content", "reasoning", "reasoning_content")
+
+
+def _redact_egress_mask(text: str) -> tuple[str, bool]:
+    """Mask secret-like spans individually, keeping the surrounding prose usable.
+
+    Unlike ``_redact_secret_text`` this does not fail closed to a whole-string placeholder:
+    it repairs an outgoing request that is otherwise still the turn's real content."""
+    try:
+        redacted = redact_for_egress(text)
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
+        return REDACTED_TOOL_SECRET, True
+    if redacted == REDACTION_UNAVAILABLE:
+        return REDACTED_TOOL_SECRET, True
+    return redacted, redacted != text
+
+
+def _redact_outbound_value(value: Any) -> tuple[Any, bool]:
+    """Mask secrets in one message payload value; ``(value, changed)``."""
+    if isinstance(value, str):
+        return _redact_egress_mask(value)
+    if isinstance(value, list):
+        out: list = []
+        changed = False
+        for item in value:
+            new, hit = _redact_outbound_value(item)
+            out.append(new)
+            changed = changed or hit
+        return (out if changed else value), changed
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        # Multimodal text part: the payload lives in ``text``, the rest is protocol shape.
+        new, hit = _redact_egress_mask(value["text"])
+        return ({**value, "text": new} if hit else value), hit
+    return value, False
+
+
+def redact_outbound_messages(messages: Any) -> bool:
+    """Mask secret-like spans in a request's message list IN PLACE; True when anything changed.
+
+    Second-line defense for a masked privacy route that answers
+    ``request blocked: disallowed PII type SECRET`` (#77484). Tool results are already
+    scrubbed at construction (``make_tool_result_message``), but a credential can still ride
+    a user turn, a tool-call argument, replayed assistant reasoning, or a row restored from a
+    session written before that boundary existed. A caller uses the return value to decide
+    whether a second attempt sends a DIFFERENT payload: an unchanged body must never be
+    resent, because the block is deterministic for the content.
+    """
+    if not isinstance(messages, list):
+        return False
+    changed = False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for key in _OUTBOUND_TEXT_KEYS:
+            if key not in message:
+                continue
+            new, hit = _redact_outbound_value(message[key])
+            if hit:
+                message[key] = new
+                changed = True
+        calls = message.get("tool_calls")
+        for call in calls if isinstance(calls, list) else ():
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not isinstance(function.get("arguments"), str):
+                continue
+            new, hit = _redact_egress_mask(function["arguments"])
+            if hit:
+                function["arguments"] = new
+                changed = True
+    return changed
 
 
 class RedactingFormatter(logging.Formatter):

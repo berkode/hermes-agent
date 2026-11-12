@@ -351,7 +351,10 @@ def test_sequential_timeout_does_not_cut_clarify_human_wait(
 
 def test_cancelled_tool_gets_synthetic_error_result(tmp_path, monkeypatch):
     """A tool that is cancelled gets a synthetic error tool result before the
-    turn ends or the model is called again (#pending_tool_result guarantee)."""
+    turn ends or the model is called again (#pending_tool_result guarantee).
+
+    The interrupt still propagates (the turn ends), so the assertions run after
+    ``pytest.raises`` — letting it escape would abort the whole pytest session."""
     import agent.tool_executor as te
     agent = _make_agent(tmp_path)
     terminal_events: list[dict] = []
@@ -366,7 +369,8 @@ def test_cancelled_tool_gets_synthetic_error_result(tmp_path, monkeypatch):
     monkeypatch.setattr(te, "_emit_terminal_post_tool_call",
                         lambda *args, **kwargs: terminal_events.append(kwargs))
 
-    with patch("model_tools.handle_function_call", side_effect=_dispatch):
+    with patch("model_tools.handle_function_call", side_effect=_dispatch), \
+            pytest.raises(KeyboardInterrupt):
         execute_tool_calls_sequential(agent, assistant, messages, "task")
 
     assert len(messages) == 1

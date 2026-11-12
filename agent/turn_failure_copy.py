@@ -265,6 +265,14 @@ CONTENT_POLICY_NEXT_STEPS = (
     "model with /model."
 )
 
+# The masked privacy route refuses a payload carrying a credential (``disallowed PII type
+# SECRET``), which is a redaction problem, not a rewording one: the fix is to remove the
+# credential, and the turn can be resent once it is gone.
+PII_BLOCK_NEXT_STEPS = (
+    "The request still contained a credential after redaction. Remove the key/token from the "
+    "message or the file it reads, then run it again."
+)
+
 # ---- one reason → "what happened" gloss, shared by cron, subagent and chat notices ------------
 
 # FailoverReason / site code → one clause (no HTTP codes, no "provider" jargon). ``{subject}``
@@ -486,10 +494,12 @@ def nonretryable_copy(
     return f"{body}\n\nProvider said: {summary}"
 
 
-def content_policy_copy(*, label: str, summary: str) -> str:
+def content_policy_copy(*, label: str, summary: str, pii_block: bool = False) -> str:
+    """Terminal copy for a safety refusal; ``pii_block`` names the credential case and its fix."""
+    next_steps = PII_BLOCK_NEXT_STEPS if pii_block else CONTENT_POLICY_NEXT_STEPS
     return (
         f"{label}'s safety filter refused this request, so the model didn't answer. "
-        f"{CONTENT_POLICY_NEXT_STEPS}\n\nProvider said: {summary}"
+        f"{next_steps}\n\nProvider said: {summary}"
     )
 
 

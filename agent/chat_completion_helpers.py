@@ -1895,23 +1895,20 @@ def _rebind_fallback_credential_pool(agent, fb_provider: str, fb_model: str) -> 
 
 
 def _log_fallback_activated(agent, reason, old_model, old_provider, fb_model, fb_provider) -> None:
-    """Log a provider/model fallback: both models, both providers, and the classified reason —
-    never request bodies, so no secret or prompt content reaches the log."""
+    """A billing switch is a WARNING naming the remedy; every other reason logs INFO."""
     reason_text = _fallback_reason_text(reason) if reason else "unknown"
-    if reason == FailoverReason.billing:
-        from hermes_constants import get_hermes_home, profile_name_for_home
-        profile = profile_name_for_home(get_hermes_home()) or "default"
-        remedy = "hermes model" if profile == "default" else f"hermes -p {profile} model"
-        logger.warning(
-            "Profile %s: fallback %s via %s refused for %s — using %s via %s. "
-            "Top up credits, or run `%s` to pick a model this account can use.",
-            profile, old_model, old_provider, reason_text, fb_model, fb_provider, remedy,
-        )
-    else:
-        logger.info(
-            "Fallback activated: %s via %s → %s via %s (reason=%s)",
-            old_model, old_provider, fb_model, fb_provider, reason_text,
-        )
+    if reason != FailoverReason.billing:
+        logger.info("Fallback activated: %s via %s → %s via %s (reason=%s)", old_model, old_provider,
+                    fb_model, fb_provider, reason_text)
+        return
+    from hermes_constants import get_hermes_home, profile_name_for_home
+    profile = profile_name_for_home(get_hermes_home()) or "default"
+    remedy = "hermes model" if profile == "default" else f"hermes -p {profile} model"
+    logger.warning(
+        "Profile %s: %s via %s refused for billing/credits — using fallback %s via %s. "
+        "Top up credits, or run `%s` to pick a model this account can use.",
+        profile, old_model, old_provider, fb_model, fb_provider, remedy,
+    )
 
 
 def _fallback_chain_exhausted(agent, reason: FailoverReason | None) -> bool:
