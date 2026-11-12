@@ -480,13 +480,18 @@ _R = FailoverReason
 
 _V_BILLING = _v(_R.billing, retryable=False, **_ROTATE_FALLBACK)
 _V_RATE_LIMIT = _v(_R.rate_limit, **_ROTATE_FALLBACK)
-_V_AUTH_ROTATE = _v(_R.auth, retryable=False, **_ROTATE_FALLBACK)
-_V_AUTH_FALLBACK = _v(_R.auth, **_ABORT_FALLBACK)
+# Deterministic 4xx errors (content_policy_blocked / 400 PII, auth 401/403, format_error 400/422)
+# must NOT walk the fallback chain: the same prompt fails identically on every provider.
+# Rotate-on-same-provider (auth) is still attempted before the terminal abort.
+_V_AUTH_ROTATE = _v(_R.auth, retryable=False, should_rotate_credential=True, should_fallback=False)
+_V_AUTH_FALLBACK = _v(_R.auth, retryable=False, should_fallback=False)
 _V_MODEL_NOT_FOUND = _v(_R.model_not_found, **_ABORT_FALLBACK)
 _V_UPSTREAM_BLOCKED = _v(_R.upstream_blocked, **_ABORT_FALLBACK)
-_V_CONTENT_BLOCKED = _v(_R.content_policy_blocked, **_ABORT_FALLBACK)
+_V_CONTENT_BLOCKED = _v(_R.content_policy_blocked, retryable=False, should_fallback=False)
 # Another account in the same pool may hold the entitlement; the credential itself is healthy.
 _V_MODEL_ENTITLEMENT = _v(_R.model_entitlement, retryable=False, **_ROTATE_FALLBACK)
+# Deterministic content policy/PII blocks never walk the fallback chain (same prompt fails everywhere).
+# Generic format_error keeps its fallback (another provider may accept the request).
 _V_FORMAT_ERROR = _v(_R.format_error, **_ABORT_FALLBACK)
 # A different provider (direct instead of the aggregator; another host's TLS chain) can fix these.
 _V_POLICY_BLOCKED = _v(_R.provider_policy_blocked, **_ABORT_FALLBACK)

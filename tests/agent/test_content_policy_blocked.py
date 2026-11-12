@@ -36,8 +36,9 @@ class TestContentPolicyBlockedClassification:
         # caused the 3x retry burn.
         assert result.reason == FailoverReason.content_policy_blocked
         assert result.retryable is False
-        # Recovery is fallback model, not credential rotation or compression.
-        assert result.should_fallback is True
+        # Deterministic policy block does NOT walk the fallback chain:
+        # every provider refuses the same prompt identically (#12770).
+        assert result.should_fallback is False
         assert result.should_compress is False
         assert result.should_rotate_credential is False
 

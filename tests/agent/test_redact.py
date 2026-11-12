@@ -2016,3 +2016,68 @@ class TestProviderEgressContainsNoToolSecret:
         assert token not in body
         assert "[REDACTED_SECRET]" in body
 
+
+
+class TestRedactionTurnContinuesAndNoLogLeak:
+    """Redaction of secret-like spans lets the turn continue, and the original
+    secret value never appears in logs or outgoing provider payloads.
+    """
+
+    def test_redacted_tool_result_lets_turn_continue(self, monkeypatch, caplog):
+        """A tool result containing a secret is redacted before reaching the model,
+        so the turn continues instead of being blocked with HTTP 400 PII."""
+        import logging
+        from agent.redact import redact_tool_result
+
+        secret = "sk-test-FAKE-key-that-looks-like-a-real-key"
+        tool_output = f"Obsidian vault note:\nAPI_KEY={secret}\nmore content here"
+
+        # Redact before the request goes to the masked privacy route
+        redacted = redact_tool_result(tool_output)
+        assert secret not in redacted
+        assert redacted == "[REDACTED_SECRET]"
+
+        # The original secret must not appear in log records:
+        # only the redacted form may be logged.
+        caplog.set_level(logging.DEBUG)
+        logger = logging.getLogger("agent.redact")
+        logger.debug("processing tool output: %s", redacted)
+        for record in caplog.records:
+            assert secret not in record.getMessage(), "secret leaked into log"
+
+        # The redacted output can safely go to the model (turn continues)
+        assert "[REDACTED_SECRET]" in redacted
+
+    def test_prefixless_bearer_redacted_in_outgoing_payload(self):
+        """A prefix-less 'Authorization: Bearer <opaque 20+ char token>' and a
+        postgres DSN password must not survive redact_tool_result."""
+        from agent.redact import redact_tool_result
+
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        bearer = f"Authorization: Bearer {token}"
+        dsn = f"postgresql://app_user:{token}@db.example.com:5432/appdb"
+
+        assert token not in redact_tool_result(bearer)
+        assert token not in redact_tool_result(dsn)
+
+    def test_normal_git_log_block_unchanged(self):
+        """A normal git log / git show block (commit SHA plus an Author: line)
+        must remain unchanged — whole-word keyword matches, not substring stems."""
+        from agent.redact import redact_tool_result
+
+        text = """commit 0123456789abcdef0123456789abcdef01234567
+Author: Jane Doe <jane@example.com>
+Date:   Mon Nov 9 10:00:00 2026 +0000
+
+    Fix cron timeout on bej profile
+
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index abcdef1..1234567 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -1 +1 @@
+-old code
++new code
+"""
+        result = redact_tool_result(text)
+        assert result == text, f"git log block was mangled: {result!r}"

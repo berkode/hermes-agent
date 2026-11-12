@@ -347,3 +347,61 @@ def test_sequential_timeout_does_not_cut_clarify_human_wait(
     assert "timed out" not in messages[0]["content"]
     assert messages[1]["content"] == "second result"
     assert not any(event.get("error_type") == "tool_timeout" for event in terminal_events)
+
+
+def test_cancelled_tool_gets_synthetic_error_result(tmp_path, monkeypatch):
+    """A tool that is cancelled gets a synthetic error tool result before the
+    turn ends or the model is called again (#pending_tool_result guarantee)."""
+    import agent.tool_executor as te
+    agent = _make_agent(tmp_path)
+    terminal_events: list[dict] = []
+
+    def _dispatch(_name, _args, _task_id="", **_kwargs):
+        raise KeyboardInterrupt("user pressed stop")
+
+    calls = [_tool_call("terminal")]
+    assistant = SimpleNamespace(tool_calls=calls)
+    messages: list[dict] = []
+
+    monkeypatch.setattr(te, "_emit_terminal_post_tool_call",
+                        lambda *args, **kwargs: terminal_events.append(kwargs))
+
+    with patch("model_tools.handle_function_call", side_effect=_dispatch):
+        execute_tool_calls_sequential(agent, assistant, messages, "task")
+
+    assert len(messages) == 1
+    assert messages[0]["tool_call_id"] == calls[0].id
+    assert "cancelled" in messages[0]["content"].lower()
+    assert any(e.get("status") == "cancelled" for e in terminal_events)
+
+
+def test_timeout_tool_gets_synthetic_error_result(tmp_path, monkeypatch):
+    """A tool that times out gets a synthetic error tool result containing
+    the tool_call_id pairing, before the model is called again."""
+    import agent.tool_executor as te
+    agent = _make_agent(tmp_path)
+    terminal_events: list[dict] = []
+    release = threading.Event()
+
+    def _dispatch(_name, _args, _task_id="", **_kwargs):
+        release.wait(timeout=5)  # never releases -> timeout
+        return "late"
+
+    calls = [_tool_call("slow")]
+    assistant = SimpleNamespace(tool_calls=calls)
+    messages: list[dict] = []
+
+    monkeypatch.setenv("HERMES_CONCURRENT_TOOL_TIMEOUT_S", "0.05")
+    monkeypatch.setattr(te, "_emit_terminal_post_tool_call",
+                        lambda *args, **kwargs: terminal_events.append(kwargs))
+
+    try:
+        with patch("model_tools.handle_function_call", side_effect=_dispatch):
+            execute_tool_calls_sequential(agent, assistant, messages, "task")
+    finally:
+        release.set()
+
+    assert len(messages) == 1
+    assert messages[0]["tool_call_id"] == calls[0].id
+    assert "timed out" in messages[0]["content"]
+    assert any(e.get("status") == "timeout" for e in terminal_events)

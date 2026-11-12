@@ -162,13 +162,15 @@ class TestClassifyApiError:
         # 401 is non-retryable on its own — credential rotation runs
         # before the retryability check in the agent loop.
         assert result.retryable is False
-        assert result.should_fallback is True
+        # Deterministic 4xx does not walk the fallback chain.
+        assert result.should_fallback is False
 
     def test_403_classified_as_auth(self):
         e = MockAPIError("Forbidden", status_code=403)
         result = classify_api_error(e, provider="anthropic")
         assert result.reason == FailoverReason.auth
-        assert result.should_fallback is True
+        # Deterministic 4xx does not walk the fallback chain.
+        assert result.should_fallback is False
 
     def test_403_upstream_unavailable_code_is_transient_not_auth(self):
         """A gateway 403 stamped ``code=upstream_unavailable`` is a transient upstream
@@ -722,7 +724,8 @@ class TestClassifyApiError:
         result = classify_api_error(e, provider="openai-codex", model="gpt-5.5")
         assert result.reason == FailoverReason.content_policy_blocked
         assert result.retryable is False
-        assert result.should_fallback is True
+        # Deterministic policy block does not walk the fallback chain.
+        assert result.should_fallback is False
         assert result.should_compress is False
 
     def test_400_content_exists_risk_commandcode_moderation(self):
@@ -754,7 +757,8 @@ class TestClassifyApiError:
         )
         assert result.reason == FailoverReason.content_policy_blocked
         assert result.retryable is False
-        assert result.should_fallback is True
+        # Deterministic policy block does not walk the fallback chain.
+        assert result.should_fallback is False
         assert result.should_compress is False
 
 
@@ -1158,7 +1162,8 @@ class TestClassifyApiError:
         assert result.reason == FailoverReason.auth
         assert result.retryable is False
         assert result.should_rotate_credential is True
-        assert result.should_fallback is True
+        # Deterministic auth does not walk the fallback chain.
+        assert result.should_fallback is False
 
 
     # ── Message-only usage limit disambiguation (no status code) ──
@@ -2142,7 +2147,8 @@ class TestBodyCarriedStatus:
         assert result.status_code == 403
         assert result.reason == FailoverReason.auth
         assert result.retryable is False
-        assert result.should_fallback is True
+        # Deterministic 4xx does not walk the fallback chain.
+        assert result.should_fallback is False
 
 
 class TestStreamingRenderFormatError:

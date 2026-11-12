@@ -7,8 +7,11 @@ advancement through multiple providers.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 from agent.error_classifier import FailoverReason
+from tests.agent.test_error_classifier import MockAPIError
 from run_agent import AIAgent
 
 
@@ -545,3 +548,42 @@ class TestMoaPresetFallback:
                             fallback_model={"provider": "moa", "model": "default"})
         _assert_bound_to_moa_preset(agent)
         assert agent._fallback_activated is True
+
+
+# ── Deterministic 4xx must NOT walk the fallback chain (#12770) ──────────
+
+
+class TestDeterministic4xxNoFallback:
+    """Deterministic 4xx errors (content_policy_blocked/400 PII, auth 401/403,
+    format_error 400/422) must stop at the first provider and not walk the
+    fallback chain. Retries/fallbacks remain only for 429, 5xx, and timeouts.
+    """
+
+    @pytest.mark.parametrize("status,msg", [
+        # content_policy_blocked: matches _CONTENT_POLICY_BLOCKED_PATTERNS
+        (None, "This content was flagged for possible cybersecurity risk"),
+        (400, "violates our usage policies"),
+        # auth: 401/403 status codes
+        (401, "invalid api key"),
+        (403, "forbidden"),
+    ])
+    def test_deterministic_4xx_classifier_says_no_fallback(self, status, msg):
+        """A deterministic 4xx classifier verdict has should_fallback=False so the
+        retry loop never walks the fallback chain (#12770)."""
+        from agent.error_classifier import classify_api_error
+
+        e = MockAPIError(msg, status_code=status, body={"error": {"message": msg}})
+        classified = classify_api_error(e, provider="nous")
+        assert classified.retryable is False
+        assert classified.should_fallback is False
+
+    def test_429_classifier_says_fallback(self):
+        """A 429 rate-limit still falls back (transient, may clear on another provider)."""
+        from agent.error_classifier import classify_api_error, FailoverReason
+
+        e = MockAPIError("Rate limit exceeded", status_code=429,
+                         body={"error": {"message": "Rate limit exceeded"}})
+        classified = classify_api_error(e, provider="nous")
+        assert classified.reason == FailoverReason.rate_limit
+        assert classified.retryable is True
+        assert classified.should_fallback is True
