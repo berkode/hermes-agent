@@ -367,6 +367,14 @@ _PROVIDER_POLICY_BLOCKED_PATTERNS = (
 # event (no status): permanent for this account, so never the transient retry ladder.
 _ACCOUNT_POLICY_BLOCK_PATTERNS = ("blocked for a previous policy violation",)
 
+# The masked privacy route refuses a payload carrying a credential it recognized with a 400
+# ``request blocked: disallowed PII type SECRET`` (#77484). Narrow on purpose: "pii" alone
+# would claim unrelated validation errors, and the route always names the class.
+_PII_SECRET_BLOCK_PATTERNS = (
+    "disallowed pii", "disallowed_pii", "pii type secret", "pii_type_secret",
+    "pii blocked", "pii_blocked",
+)
+
 # Per-prompt safety-filter blocks: deterministic for the unchanged request, so
 # fallback immediately. Each phrase is verbatim from one provider (Codex cyber
 # flags #18028, OpenAI moderation, Anthropic safety, Azure token, MiniMax
@@ -374,12 +382,16 @@ _ACCOUNT_POLICY_BLOCK_PATTERNS = ("blocked for a previous policy violation",)
 # guardrail `data_inspection_failed`, input and output side) — never a generic
 # word like "policy" that collides with billing/auth.
 # "content_filter" deliberately excludes the space variant seen in echoed config.
+# The PII-SECRET wording is here too: without it the 400 fell through
+# ``_classify_400`` to ``_V_FORMAT_ERROR`` (should_fallback=True) and walked the
+# whole fallback chain on a block every provider repeats verbatim.
 _CONTENT_POLICY_BLOCKED_PATTERNS = (
     "flagged for possible cybersecurity risk", "trusted access for cyber",
     "violates our usage policies", "violates openai's usage policies", "your request was flagged by",
     "prompt was flagged by our safety", "responses cannot be generated due to safety",
     "content_filter", "responsibleaipolicyviolation", "new_sensitive",
     "content exists risk", "data may contain inappropriate content", "data_inspection_failed",
+    *_PII_SECRET_BLOCK_PATTERNS,
 )
 
 # Auth patterns (non-status-code signals).
@@ -480,13 +492,21 @@ _R = FailoverReason
 
 _V_BILLING = _v(_R.billing, retryable=False, **_ROTATE_FALLBACK)
 _V_RATE_LIMIT = _v(_R.rate_limit, **_ROTATE_FALLBACK)
+# Auth 401/403: rotate the same provider's credential first, and still allow the fallback
+# chain — a 401 from provider A says nothing about provider B's key, so a correctly keyed
+# fallback can succeed where A cannot (#72911). Only a deterministic CONTENT refusal skips
+# the cascade (see _V_CONTENT_BLOCKED): the same prompt is refused everywhere.
 _V_AUTH_ROTATE = _v(_R.auth, retryable=False, **_ROTATE_FALLBACK)
 _V_AUTH_FALLBACK = _v(_R.auth, **_ABORT_FALLBACK)
 _V_MODEL_NOT_FOUND = _v(_R.model_not_found, **_ABORT_FALLBACK)
 _V_UPSTREAM_BLOCKED = _v(_R.upstream_blocked, **_ABORT_FALLBACK)
-_V_CONTENT_BLOCKED = _v(_R.content_policy_blocked, **_ABORT_FALLBACK)
+# A safety/PII refusal is decided by the request CONTENT, so every provider refuses the same
+# payload: retrying or walking the fallback chain just repeats it. Terminal, no fallback.
+_V_CONTENT_BLOCKED = _v(_R.content_policy_blocked, retryable=False, should_fallback=False)
 # Another account in the same pool may hold the entitlement; the credential itself is healthy.
 _V_MODEL_ENTITLEMENT = _v(_R.model_entitlement, retryable=False, **_ROTATE_FALLBACK)
+# Deterministic content policy/PII blocks never walk the fallback chain (same prompt fails everywhere).
+# Generic format_error keeps its fallback (another provider may accept the request).
 _V_FORMAT_ERROR = _v(_R.format_error, **_ABORT_FALLBACK)
 # A different provider (direct instead of the aggregator; another host's TLS chain) can fix these.
 _V_POLICY_BLOCKED = _v(_R.provider_policy_blocked, **_ABORT_FALLBACK)
@@ -497,6 +517,12 @@ _V_OVERLOADED, _V_SERVER_ERROR, _V_TIMEOUT, _V_UNKNOWN = map(_v, (_R.overloaded,
 _V_IMAGE_TOO_LARGE, _V_IMAGE_CORRUPT = _v(_R.image_too_large), _v(_R.image_corrupt)
 _V_MULTIMODAL, _V_INVALID_ENCRYPTED = _v(_R.multimodal_tool_content_unsupported), _v(_R.invalid_encrypted_content)
 _V_REASONING_MANDATORY = _v(_R.reasoning_mandatory, should_compress=False, should_fallback=False)
+# A 422 that names WHAT it rejected (pydantic ``detail[].loc``/``msg``, or the request-validation
+# wordings) is deterministic for the payload: every retry and every provider renders the same
+# body from the same transcript, so walking the chain only replays it. Distinct from the generic
+# ``format_error`` verdict, which keeps its fallback: a bare 422 has no stated cause, and a
+# different provider (or transport) may accept a shape this one rejects.
+_V_UNPROCESSABLE = _v(_R.format_error, retryable=False, should_fallback=False)
 # Same recovery hints as format_error: consumers without a merge-and-retry step (the main loop
 # already merges adjacent users before the call) keep aborting to the fallback chain.
 _V_ROLE_ALTERNATION = _v(_R.role_alternation, **_ABORT_FALLBACK)
@@ -1294,10 +1320,18 @@ def _classify_400(c: _Ctx) -> Verdict:
 
 
 def _classify_image_tool_422(c: _Ctx) -> Verdict:
-    """422: pydantic relays report the same content-field shapes as 400 (#104731, #112473)."""
+    """422: pydantic relays report the same content-field shapes as 400 (#104731, #112473).
+
+    A 422 that NAMES what it rejected is deterministic for the request shape: every retry and
+    every other provider rebuilds the same body from the same transcript, so it stops here
+    instead of walking the fallback chain. A bare 422 (no field, no validation wording) states
+    no cause, so it keeps ``format_error``'s fallback — another provider may accept the shape."""
     if _oversized_message_content_rejection(c.body):
         return _V_IMAGE_TOO_LARGE
-    return _first_match(c.msg, _IMAGE_TOOL_RULES) or _V_FORMAT_ERROR
+    verdict = _first_match(c.msg, _IMAGE_TOOL_RULES)
+    if verdict is not None:
+        return verdict
+    return _V_UNPROCESSABLE if _names_validation_field(c.msg, c.body, c.code) else _V_FORMAT_ERROR
 
 
 # 401 not retryable on its own: rotation/refresh run before the retryability
@@ -1443,6 +1477,28 @@ def _build_error_msg(error: Exception, body: Any) -> str:
     if metadata_msg and metadata_msg not in raw_msg and metadata_msg not in body_msg:
         parts.append(metadata_msg)
     return " ".join(parts)
+
+
+def _names_validation_field(msg: str, body: dict, code: str) -> bool:
+    """Whether a 4xx body names the parameter/shape it refused (deterministic for the payload).
+
+    A strict pydantic gateway answers with ``detail: [{"loc": [...], "msg": ...}]`` and no prose
+    naming the field; litellm/Anthropic-style relays say it in the message. Either identifies the
+    rejection as a payload-shape verdict rather than an unexplained failure."""
+    if any(p in msg for p in _400_VALIDATION_PATTERNS) or code in _400_VALIDATION_CODES:
+        return True
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return isinstance(detail, list) and any(
+        isinstance(item, dict) and item.get("loc") for item in detail)
+
+
+def is_pii_secret_block(error_msg: Any) -> bool:
+    """Whether an error is the masked privacy route's ``disallowed PII type SECRET`` refusal.
+
+    The recovery branch needs this separately from the verdict: a content-policy block from a
+    model's safety filter is terminal immediately, while a PII block can sometimes be repaired
+    by scrubbing the outgoing payload once more."""
+    return any(p in str(error_msg or "").lower() for p in _PII_SECRET_BLOCK_PATTERNS)
 
 
 def _body_message_candidates(body: dict) -> Iterator[Any]:

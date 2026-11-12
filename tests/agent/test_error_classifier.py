@@ -162,12 +162,14 @@ class TestClassifyApiError:
         # 401 is non-retryable on its own — credential rotation runs
         # before the retryability check in the agent loop.
         assert result.retryable is False
+        # A 401 on this provider says nothing about another provider's key: fallback stays.
         assert result.should_fallback is True
 
     def test_403_classified_as_auth(self):
         e = MockAPIError("Forbidden", status_code=403)
         result = classify_api_error(e, provider="anthropic")
         assert result.reason == FailoverReason.auth
+        # A 403 on this provider says nothing about another provider's key: fallback stays.
         assert result.should_fallback is True
 
     def test_403_upstream_unavailable_code_is_transient_not_auth(self):
@@ -722,7 +724,8 @@ class TestClassifyApiError:
         result = classify_api_error(e, provider="openai-codex", model="gpt-5.5")
         assert result.reason == FailoverReason.content_policy_blocked
         assert result.retryable is False
-        assert result.should_fallback is True
+        # A safety refusal is decided by the CONTENT: every provider refuses the same prompt.
+        assert result.should_fallback is False
         assert result.should_compress is False
 
     def test_400_content_exists_risk_commandcode_moderation(self):
@@ -754,16 +757,11 @@ class TestClassifyApiError:
         )
         assert result.reason == FailoverReason.content_policy_blocked
         assert result.retryable is False
-        assert result.should_fallback is True
+        # A safety refusal is decided by the CONTENT: every provider refuses the same prompt.
+        assert result.should_fallback is False
         assert result.should_compress is False
 
-
-
-
-
-
     # ── Payload too large ──
-
     def test_413_payload_too_large(self):
         e = MockAPIError("Request Entity Too Large", status_code=413)
         result = classify_api_error(e)
@@ -1158,6 +1156,7 @@ class TestClassifyApiError:
         assert result.reason == FailoverReason.auth
         assert result.retryable is False
         assert result.should_rotate_credential is True
+        # A failed token extraction on this provider still allows another provider's key.
         assert result.should_fallback is True
 
 
@@ -2142,6 +2141,7 @@ class TestBodyCarriedStatus:
         assert result.status_code == 403
         assert result.reason == FailoverReason.auth
         assert result.retryable is False
+        # A ban on one provider's account still leaves another provider's key usable.
         assert result.should_fallback is True
 
 

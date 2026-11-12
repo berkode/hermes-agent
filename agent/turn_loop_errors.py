@@ -14,6 +14,7 @@ import sys
 from typing import Any
 
 from agent.message_metadata import append_message
+from agent.tool_dispatch_helpers import make_tool_result_message
 from agent.turn_failure_copy import short_detail, site_copy
 
 logger = logging.getLogger("agent.conversation_loop")
@@ -133,12 +134,9 @@ def handle_outer_loop_error(
             }
             for tc in msg["tool_calls"]:
                 if tc and isinstance(tc, dict) and tc["id"] not in answered_ids:
-                    append_message(messages, {
-                        "role": "tool",
-                        "name": _ra().AIAgent._get_tool_call_name_static(tc),
-                        "tool_call_id": tc["id"],
-                        "content": f"Error executing tool: {error_msg}",
-                    })
+                    append_message(messages, make_tool_result_message(
+                        _ra().AIAgent._get_tool_call_name_static(tc),
+                        f"Error executing tool: {error_msg}", tc["id"]))
         break
 
     # Non-tool errors are already printed; a synthetic message would pollute history

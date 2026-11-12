@@ -300,3 +300,49 @@ class TestElisionNoticeWiring:
         text = msg["content"][0]["text"]
         assert text.index(_UPSTREAM_ELISION_NOTICE.strip()) < text.index("</untrusted_tool_result>")
         assert _UPSTREAM_ELISION_NOTICE.strip() not in msg["content"][1]["text"] and msg["content"][2] == img
+
+
+class TestToolResultRedaction:
+    """Every tool output is scrubbed for key-like material before it reaches the model."""
+
+    def test_api_key_in_tool_result_redacted_before_message(self):
+        token = "sk-live-0123456789abcdefghijklmnopqrstuvwxyz"
+        msg = make_tool_result_message("read_file", f"contents:\n{token}", "call_1")
+        assert token not in msg["content"]
+        assert "[REDACTED_SECRET]" in msg["content"]
+
+    def test_private_key_in_file_read_redacted(self):
+        pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
+        msg = make_tool_result_message("cat", f"key block:\n{pem}", "call_2")
+        assert "MIIEpAIBAAKCAQEA" not in msg["content"]
+        assert "[REDACTED_SECRET]" in msg["content"]
+
+    def test_jwt_in_web_extract_redacted(self):
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNtPn"
+        msg = make_tool_result_message("web_extract", f"token={jwt}", "call_3")
+        assert jwt not in msg["content"]
+        assert "[REDACTED_SECRET]" in msg["content"]
+
+    def test_ghp_token_redacted(self):
+        token = "ghp_" + "A" * 40
+        msg = make_tool_result_message("terminal", f"export GH_PAT={token}", "call_4")
+        assert token not in msg["content"]
+        assert "[REDACTED_SECRET]" in msg["content"]
+
+    def test_high_entropy_hex_adjacent_to_secret_redacted(self):
+        blob = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        msg = make_tool_result_message("terminal", f"secret: {blob}", "call_5")
+        assert blob not in msg["content"]
+        assert "[REDACTED_SECRET]" in msg["content"]
+
+    def test_ordinary_hash_uuid_not_mangled(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        uuid = "550e8400-e29b-41d4-a716-446655440000"
+        msg = make_tool_result_message("terminal", f"commit {sha} id={uuid}", "call_6")
+        assert sha in msg["content"]
+        assert uuid in msg["content"]
+
+    def test_long_hex_without_secret_keyword_passthrough(self):
+        blob = "deadbeef" * 8
+        msg = make_tool_result_message("terminal", f"hash={blob}", "call_7")
+        assert blob in msg["content"]

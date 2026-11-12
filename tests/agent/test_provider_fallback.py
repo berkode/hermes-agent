@@ -7,8 +7,11 @@ advancement through multiple providers.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 from agent.error_classifier import FailoverReason
+from tests.agent.test_error_classifier import MockAPIError
 from run_agent import AIAgent
 
 
@@ -545,3 +548,92 @@ class TestMoaPresetFallback:
                             fallback_model={"provider": "moa", "model": "default"})
         _assert_bound_to_moa_preset(agent)
         assert agent._fallback_activated is True
+
+
+# ── Deterministic 4xx must NOT walk the fallback chain (#12770) ──────────
+
+
+class TestDeterministic4xxNoFallback:
+    """Only *content* verdicts are terminal across the chain; a per-provider auth failure is not.
+
+    A safety/PII refusal is decided by the request content, so every provider refuses the same
+    payload and the chain must not walk. A 401/403 says something about THIS provider's credential,
+    not about another provider's correctly-keyed one, so fallback stays available. Retries and
+    fallbacks remain for 429, 5xx, and timeouts.
+    """
+
+    @pytest.mark.parametrize("status,msg", [
+        (400, "Request blocked: disallowed PII type SECRET"),
+        (None, "This content was flagged for possible cybersecurity risk"),
+        (400, "violates our usage policies"),
+    ])
+    def test_content_verdict_says_no_fallback(self, status, msg):
+        """A content-policy/PII verdict has should_fallback=False: no other provider accepts it."""
+        from agent.error_classifier import classify_api_error
+
+        e = MockAPIError(msg, status_code=status, body={"error": {"message": msg}})
+        result = classify_api_error(e, provider="nous")
+        assert result.reason == FailoverReason.content_policy_blocked
+        assert result.retryable is False
+        assert result.should_fallback is False
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_auth_on_one_provider_still_allows_fallback(self, status):
+        """A rejected key on provider A must not strand a correctly-keyed provider B."""
+        from agent.error_classifier import classify_api_error
+
+        e = MockAPIError("invalid api key", status_code=status,
+                         body={"error": {"message": "invalid api key"}})
+        result = classify_api_error(e, provider="nous")
+        assert result.reason == FailoverReason.auth
+        assert result.should_fallback is True
+
+    def test_429_classifier_says_fallback(self):
+        """A 429 rate-limit still falls back (transient, may clear on another provider)."""
+        from agent.error_classifier import classify_api_error, FailoverReason
+
+        e = MockAPIError("Rate limit exceeded", status_code=429,
+                         body={"error": {"message": "Rate limit exceeded"}})
+        classified = classify_api_error(e, provider="nous")
+        assert classified.reason == FailoverReason.rate_limit
+        assert classified.retryable is True
+        assert classified.should_fallback is True
+
+    @pytest.mark.parametrize("status,reason", [
+        (500, FailoverReason.server_error),
+        (502, FailoverReason.server_error),
+        (503, FailoverReason.overloaded),
+        (504, FailoverReason.server_error),
+    ])
+    def test_5xx_classifier_stays_retryable(self, status, reason):
+        """An upstream fault is the provider's problem: retry with backoff, then fall back."""
+        from agent.error_classifier import classify_api_error
+
+        e = MockAPIError("upstream error", status_code=status,
+                         body={"error": {"message": "upstream error"}})
+        classified = classify_api_error(e, provider="nous")
+        assert classified.reason == reason
+        assert classified.retryable is True
+        # Not an eager cascade: the backoff budget runs first, then the exhaust path falls back.
+        assert classified.should_fallback is False
+
+    def test_timeout_classifier_stays_retryable_and_transport_eligible(self):
+        """Timeouts take the transport path: retry, then hand off after the backoff budget."""
+        from agent.error_classifier import classify_api_error
+        from agent.turn_recovery import _TRANSPORT_FAILURE_REASONS
+
+        e = MockAPIError("Request timed out after 600s")
+        classified = classify_api_error(e, provider="nous")
+        assert classified.reason == FailoverReason.timeout
+        assert classified.retryable is True
+        # The loop's own gate (``_should_fallback``) admits this reason after two retries.
+        assert classified.reason in _TRANSPORT_FAILURE_REASONS
+
+    def test_overloaded_classifier_is_transport_eligible(self):
+        from agent.error_classifier import classify_api_error
+        from agent.turn_recovery import _TRANSPORT_FAILURE_REASONS
+
+        e = MockAPIError("server overloaded", status_code=503)
+        classified = classify_api_error(e, provider="nous")
+        assert classified.reason == FailoverReason.overloaded
+        assert classified.reason in _TRANSPORT_FAILURE_REASONS

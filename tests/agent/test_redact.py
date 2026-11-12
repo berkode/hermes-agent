@@ -2,6 +2,7 @@
 
 import ast
 import logging
+import re
 import time
 
 import pytest

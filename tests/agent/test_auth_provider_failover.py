@@ -74,3 +74,85 @@ class TestAuthFailoverActivation:
             advanced = agent._try_activate_fallback(reason=classified.reason)
         assert advanced is True
         assert agent._fallback_index == 1
+
+
+
+
+# ── The loop-level contract (full run_conversation drive) ─────────────────────
+#
+# The activation primitive already advances on an auth reason (above). These pin
+# the end-to-end consequence: a credential verdict is per-PROVIDER, so a 401/403
+# on A must still reach B — while a content/PII block is per-PAYLOAD and must
+# stop at one provider.
+
+def _mock_response(content: str):
+    from types import SimpleNamespace
+
+    msg = SimpleNamespace(content=content, tool_calls=None)
+    choice = SimpleNamespace(message=msg, finish_reason="stop")
+    return SimpleNamespace(choices=[choice], model="fallback/model", usage=None)
+
+
+def _pii_400():
+    err = Exception("HTTP 400 request blocked: disallowed PII type SECRET")
+    err.status_code = 400
+    err.body = {"error": {"message": "request blocked: disallowed PII type SECRET"}}
+    return err
+
+
+def _drive_turn(agent, failures):
+    """Run one turn whose API call raises ``failures`` in order; return (result, calls)."""
+    calls = []
+
+    def fake_api_call(api_kwargs):
+        calls.append((agent.provider, agent.model))
+        idx = len(calls) - 1
+        if idx < len(failures):
+            raise failures[idx]
+        return _mock_response("answered by the second provider")
+
+    with (
+        patch.object(agent, "_interruptible_api_call", side_effect=fake_api_call),
+        patch.object(agent, "_persist_session"),
+        patch.object(agent, "_save_trajectory"),
+        patch.object(agent, "_cleanup_task_resources"),
+        patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()),
+        patch("agent.agent_runtime_helpers.time.sleep"),
+        patch(
+            "agent.auxiliary_client.resolve_provider_client",
+            return_value=(_mock_client(), "gpt-4o"),
+        ),
+        patch("hermes_cli.model_normalize.normalize_model_for_provider", side_effect=lambda m, p: m),
+        patch("agent.model_metadata.get_model_context_length", return_value=200000),
+    ):
+        return agent.run_conversation("hello"), calls
+
+
+class TestAuthFailoverReachesTheSecondProvider:
+    def test_401_on_provider_a_tries_provider_b(self):
+        agent = _make_agent(fallback_model=[{"provider": "openai", "model": "gpt-4o"}])
+        agent._api_max_retries = 1
+        result, calls = _drive_turn(agent, [_auth_error(401)])
+
+        assert len(calls) == 2, calls
+        assert calls[0][0] != calls[1][0], calls
+        assert agent._fallback_activated is True
+        assert result["completed"] is True
+
+    def test_403_on_provider_a_tries_provider_b(self):
+        agent = _make_agent(fallback_model=[{"provider": "openai", "model": "gpt-4o"}])
+        agent._api_max_retries = 1
+        result, calls = _drive_turn(agent, [_auth_error(403)])
+        assert len(calls) == 2, calls
+        assert result["completed"] is True
+
+    def test_a_pii_400_stops_at_the_first_provider(self):
+        """Every provider sees the same credential verbatim: walking the chain only repeats it."""
+        agent = _make_agent(fallback_model=[{"provider": "openai", "model": "gpt-4o"}])
+        agent._api_max_retries = 2
+        result, calls = _drive_turn(agent, [_pii_400()])
+
+        assert len(calls) == 1, calls
+        assert result["completed"] is False
+        assert result["failed"] is True
+        assert agent._fallback_activated is False

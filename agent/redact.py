@@ -10,6 +10,7 @@ import re
 import shlex
 import threading
 import unicodedata
+from typing import Any
 from urllib.parse import unquote_plus
 
 # Shared with agent/file_safety's read-block list so the two defenses can't
@@ -1446,6 +1447,221 @@ def _reset_plugin_redaction_patterns() -> None:
     with _registry_lock:
         _PLUGIN_PREFIX_PATTERNS.clear()
         _rebuild_prefix_matcher()
+
+
+# ---------------------------------------------------------------------------
+# Tool-result redaction for the model-egress boundary
+# ---------------------------------------------------------------------------
+
+# Secret-keyword adjacency for high-entropy hex/base64 blobs that carry no vendor
+# prefix. The keyword must appear within WINDOW chars before or after the blob, as a
+# WHOLE word — substring stems like "auth" in "Author" or "pass" in "passed" must not
+# match. Use \b-anchored alternation instead of `kw in ctx` substring scans.
+_SECRET_ADJACENT_KEYWORDS = frozenset({
+    "secret", "token", "key", "password", "passwd", "pass", "pw",
+    "credential", "apikey", "api_key", "auth", "private", "signing",
+})
+_SECRET_ADJACENT_KEYWORD_RE = re.compile(
+    r"\b(?:secret|token|key|password|passwd|pass|pw|credential|apikey|api_key|auth|private|signing)\b",
+    re.IGNORECASE,
+)
+
+_HEX_RE = re.compile(r"\b[0-9a-fA-F]{40,}\b")
+_BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")
+
+
+def _is_high_entropy_secret_adjacent(text: str, start: int, end: int) -> bool:
+    """True if a secret keyword sits within WINDOW chars of text[start:end].
+
+    Whole-word keyword match only: "auth" matches "auth_key" boundary but not
+    "Author", "pass" matches "pass" but not "passed".
+    """
+    window = 80
+    lo = max(0, start - window)
+    hi = min(len(text), end + window)
+    ctx = text[lo:hi]
+    return _SECRET_ADJACENT_KEYWORD_RE.search(ctx) is not None
+
+
+# Placeholder written when a tool result cannot be scanned. Fails closed: never
+# leaks raw text when the scanner itself errors.
+REDACTED_TOOL_SECRET = "[REDACTED_SECRET]"
+
+
+def redact_tool_result(content: Any, _depth: int = 0) -> Any:
+    """Scrub secret-like material from a tool result before it reaches the model.
+
+    Applied to every tool output (file reads, shell output, web extracts, etc.)
+    in ``make_tool_result_message``. Replaces each detected secret with
+    ``[REDACTED_SECRET]`` and fails closed: on any scan error it returns the
+    placeholder rather than raw text.
+
+    Walks every string in the result: raw strings, list-of-strings, dicts,
+    multimodal content parts, and ``text_summary``. Nested lists are walked
+    recursively. Tuples, bytes, and other unscannable containers fail closed.
+    Ints/None/bools pass through. Depth is bounded by ``REDACT_WALK_MAX_DEPTH``.
+    """
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET
+    try:
+        if isinstance(content, str):
+            return _redact_secret_text(content)
+        if isinstance(content, list):
+            return [_redact_tool_result_item(item, _depth + 1) for item in content]
+        if isinstance(content, dict):
+            return _redact_tool_result_dict(content, _depth + 1)
+        if isinstance(content, (tuple, bytes, bytearray, set, frozenset)):
+            return REDACTED_TOOL_SECRET
+        return content
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
+        # Fail closed: never return raw text when scanning fails.
+        return REDACTED_TOOL_SECRET
+
+
+def _redact_tool_result_item(item: Any, _depth: int = 0) -> Any:
+    """Redact one list element (string, dict, nested list; fail closed on tuples/bytes/sets)."""
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET
+    if isinstance(item, str):
+        return _redact_secret_text(item)
+    if isinstance(item, dict):
+        return _redact_tool_result_dict(item, _depth + 1)
+    if isinstance(item, list):
+        return [_redact_tool_result_item(sub, _depth + 1) for sub in item]
+    if isinstance(item, (tuple, bytes, bytearray, set, frozenset)):
+        return REDACTED_TOOL_SECRET
+    return item  # ints, None, bools, floats pass through
+
+
+def _redact_tool_result_dict(value: dict, _depth: int = 0) -> dict:
+    """Redact every string value in a dict, walking multimodal envelopes and
+    ``text_summary`` in particular."""
+    if _depth > REDACT_WALK_MAX_DEPTH:
+        return REDACTED_TOOL_SECRET  # type: ignore[return-value]
+    # Multimodal envelope: scrub each text part plus text_summary.
+    if value.get("_multimodal") is True and isinstance(value.get("content"), list):
+        parts = []
+        for part in value["content"]:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                parts.append({**part, "text": _redact_secret_text(part["text"])})
+            else:
+                parts.append(_redact_tool_result_item(part, _depth + 1))
+        result = {**value, "content": parts}
+        if isinstance(result.get("text_summary"), str):
+            result["text_summary"] = _redact_secret_text(result["text_summary"])
+        return result
+    # Generic dict: redact every string value recursively.
+    result: dict = {}
+    for key, child in value.items():
+        if isinstance(child, str):
+            result[key] = _redact_secret_text(child)
+        elif isinstance(child, (list, tuple, dict, bytes, bytearray, set, frozenset)):
+            result[key] = redact_tool_result(child, _depth + 1)
+        else:
+            result[key] = child
+    return result
+
+
+def _redact_tool_result_text_part(item: Any) -> Any:
+    """Redact one list element: dicts get their ``text`` field scrubbed."""
+    if isinstance(item, dict) and isinstance(item.get("text"), str):
+        return {**item, "text": _redact_secret_text(item["text"])}
+    return item
+
+
+def _redact_secret_text(text: str) -> str:
+    """Replace every key-like substring in ``text`` with ``[REDACTED_SECRET]``.
+
+    Reuses the full existing redaction pipeline via ``redact_for_egress``
+    (``redact_sensitive_text(force=True)`` plus bearer-residue sweep) so the
+    tool-result path is not a weaker parallel scanner. Covers bearer tokens,
+    DSNs, secret headers, assignment redaction, Zhipu keys, URL tokens,
+    control-split masking, vault values, PEM, JWT, and high-entropy adjacency.
+    Any detected secret causes the whole string to fail closed to
+    ``[REDACTED_SECRET]`` for model egress.
+    """
+    try:
+        redacted = redact_for_egress(text)
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
+        return REDACTED_TOOL_SECRET
+    if redacted == REDACTION_UNAVAILABLE or redacted != text:
+        return REDACTED_TOOL_SECRET
+    return text
+
+
+# Message fields that can carry a credential-shaped value to the provider. ``role`` /
+# ``tool_call_id`` are protocol identifiers: a mask there would corrupt the request, and a
+# provider blocks on payload, not on identifiers.
+_OUTBOUND_TEXT_KEYS = ("content", "reasoning", "reasoning_content")
+
+
+def _redact_egress_mask(text: str) -> tuple[str, bool]:
+    """Mask secret-like spans individually, keeping the surrounding prose usable.
+
+    Unlike ``_redact_secret_text`` this does not fail closed to a whole-string placeholder:
+    it repairs an outgoing request that is otherwise still the turn's real content."""
+    try:
+        redacted = redact_for_egress(text)
+    except Exception:  # health: allow BLE001 -- fail-closed scrub boundary: any scanner fault must mask, never leak
+        return REDACTED_TOOL_SECRET, True
+    if redacted == REDACTION_UNAVAILABLE:
+        return REDACTED_TOOL_SECRET, True
+    return redacted, redacted != text
+
+
+def _redact_outbound_value(value: Any) -> tuple[Any, bool]:
+    """Mask secrets in one message payload value; ``(value, changed)``."""
+    if isinstance(value, str):
+        return _redact_egress_mask(value)
+    if isinstance(value, list):
+        out: list = []
+        changed = False
+        for item in value:
+            new, hit = _redact_outbound_value(item)
+            out.append(new)
+            changed = changed or hit
+        return (out if changed else value), changed
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        # Multimodal text part: the payload lives in ``text``, the rest is protocol shape.
+        new, hit = _redact_egress_mask(value["text"])
+        return ({**value, "text": new} if hit else value), hit
+    return value, False
+
+
+def redact_outbound_messages(messages: Any) -> bool:
+    """Mask secret-like spans in a request's message list IN PLACE; True when anything changed.
+
+    Second-line defense for a masked privacy route that answers
+    ``request blocked: disallowed PII type SECRET`` (#77484). Tool results are already
+    scrubbed at construction (``make_tool_result_message``), but a credential can still ride
+    a user turn, a tool-call argument, replayed assistant reasoning, or a row restored from a
+    session written before that boundary existed. A caller uses the return value to decide
+    whether a second attempt sends a DIFFERENT payload: an unchanged body must never be
+    resent, because the block is deterministic for the content.
+    """
+    if not isinstance(messages, list):
+        return False
+    changed = False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for key in _OUTBOUND_TEXT_KEYS:
+            if key not in message:
+                continue
+            new, hit = _redact_outbound_value(message[key])
+            if hit:
+                message[key] = new
+                changed = True
+        calls = message.get("tool_calls")
+        for call in calls if isinstance(calls, list) else ():
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not isinstance(function.get("arguments"), str):
+                continue
+            new, hit = _redact_egress_mask(function["arguments"])
+            if hit:
+                function["arguments"] = new
+                changed = True
+    return changed
 
 
 class RedactingFormatter(logging.Formatter):

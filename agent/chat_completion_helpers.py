@@ -1895,11 +1895,11 @@ def _rebind_fallback_credential_pool(agent, fb_provider: str, fb_model: str) -> 
 
 
 def _log_fallback_activated(agent, reason, old_model, old_provider, fb_model, fb_provider) -> None:
-    """A billing switch is a WARNING naming the profile, both models and the remedy: the gateway
-    persists the turn as a transient failure otherwise, and nothing in the log says the paid
-    model was refused for credits or how to fix it (#115702). Other reasons stay INFO."""
+    """A billing switch is a WARNING naming the remedy; every other reason logs INFO."""
+    reason_text = _fallback_reason_text(reason) if reason else "unknown"
     if reason != FailoverReason.billing:
-        logger.info("Fallback activated: %s → %s (%s)", old_model, fb_model, fb_provider)
+        logger.info("Fallback activated: %s via %s → %s via %s (reason=%s)", old_model, old_provider,
+                    fb_model, fb_provider, reason_text)
         return
     from hermes_constants import get_hermes_home, profile_name_for_home
     profile = profile_name_for_home(get_hermes_home()) or "default"

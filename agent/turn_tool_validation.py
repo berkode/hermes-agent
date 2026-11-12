@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from agent.message_metadata import append_message
 from agent.message_sanitization import (close_interrupted_tool_sequence, coalesce_tool_call_id,
                                           normalize_provider_tool_call_ids)
+from agent.tool_dispatch_helpers import make_tool_result_message
 from agent.turn_failure_copy import site_copy, stamp_failure
 from hermes_constants import FINISH_REASON_LENGTH
 
@@ -45,12 +46,8 @@ def _preview_name(name: str) -> str:
 def _append_tool_error_results(messages, tool_calls, content_for) -> None:
     """One tool-role result per call so every tool_call keeps a matching result."""
     for tc in tool_calls:
-        append_message(messages, {
-            "role": "tool",
-            "name": tc.function.name,
-            "tool_call_id": coalesce_tool_call_id(tc),
-            "content": content_for(tc),
-        })
+        append_message(messages, make_tool_result_message(
+            tc.function.name, content_for(tc), coalesce_tool_call_id(tc)))
 
 
 def _partial_exit(agent, messages, conversation_history, api_call_count, final_response: str) -> dict[str, Any]:
